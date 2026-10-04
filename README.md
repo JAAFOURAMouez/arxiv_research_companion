@@ -37,7 +37,7 @@ The system follows a clean, layered architecture:
 
 1. Clone the repository:
    ```bash
-   git clone <repository-url>
+   git clone git@github.com:JAAFOURAMouez/arxiv_research_companion.git
    cd arxiv_research_companion
    ```
 
@@ -63,7 +63,7 @@ The system follows a clean, layered architecture:
 To start the application (which will also ingest initial data):
 
 ```bash
-python main.py
+python -m arxiv_research_companion.main
 ```
 
 Then open your browser to the URL shown in the output (typically http://localhost:7860).
@@ -102,6 +102,12 @@ Key configurable parameters:
 - LLM provider and model (HF API or local)
 - Ingestion schedule
 - Interface settings (port, theme, etc.)
+
+### Hugging Face Inference Providers
+
+The default model is `openai/gpt-oss-120b`, but it can only run if your Hugging Face account has enabled a compatible Inference Provider and your token can make Inference Providers calls. If the app reports that no provider supports the model, enable a compatible provider in your Hugging Face account settings or choose a model supported by a provider you have enabled. A model being available on Hugging Face does not guarantee that your account can call it through an Inference Provider.
+
+To pin routing to a provider enabled for your account, set `HF_INFERENCE_PROVIDER` to its provider ID. If unset, Hugging Face selects automatically from providers enabled for the account. Keep `LLM_PROVIDER` as `huggingface_api`; it selects the application backend, not a Hugging Face inference provider.
 
 ## Dependencies
 
