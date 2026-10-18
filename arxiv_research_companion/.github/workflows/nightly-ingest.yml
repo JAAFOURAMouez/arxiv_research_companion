@@ -1,0 +1,47 @@
+name: Nightly ingestion
+
+on:
+  schedule:
+    - cron: "17 3 * * *"   # 03:17 UTC daily
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+# Never let two ingestions write the database at the same time.
+concurrency:
+  group: nightly-ingest
+  cancel-in-progress: false
+
+jobs:
+  ingest:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          python-version: "3.12"
+
+      - run: uv sync --locked --no-dev
+
+      # Fails (non-zero) when the arXiv API is unreachable, the DB fails integrity_check,
+      # or the paper count decreased. "No new papers" is a success.
+      - name: Ingest
+        run: >
+          uv run python -m arxiv_research_companion.ingest_cli
+          --db arxiv_papers.db --max-total 1000 --lookback-hours 72
+
+      - name: Commit updated database
+        run: |
+          if git diff --quiet -- arxiv_papers.db; then
+            echo "Database unchanged, nothing to commit."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add arxiv_papers.db
+          git commit -m "chore(data): nightly arXiv ingestion [skip ci]"
+          git push

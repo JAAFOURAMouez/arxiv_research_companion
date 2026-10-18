@@ -1,0 +1,59 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          python-version: "3.12"
+
+      # --locked fails if uv.lock is missing or out of date with pyproject.toml.
+      - name: Install (locked)
+        run: uv sync --locked
+
+      # Streamlit Cloud deploys from requirements.txt; make sure it cannot drift from the lock.
+      - name: requirements.txt matches uv.lock
+        run: |
+          uv export --locked --no-dev --no-hashes --no-emit-project -o /tmp/requirements.generated.txt
+          diff <(grep -v '^#' /tmp/requirements.generated.txt) <(grep -v '^#' requirements.txt)
+
+      # Unit tests + Streamlit AppTest. No network: embeddings and Groq are faked.
+      - name: pytest
+        run: uv run pytest -m "not slow and not network"
+
+  slow:
+    # Real ONNX model download; run by hand from the Actions tab.
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          python-version: "3.12"
+      - run: uv sync --locked
+      - name: Cache chroma ONNX model
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/chroma
+          key: chroma-onnx-${{ runner.os }}
+      - run: uv run pytest -m "slow or network"
