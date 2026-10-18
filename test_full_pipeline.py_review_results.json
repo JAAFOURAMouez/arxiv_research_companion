@@ -1,0 +1,37 @@
+[
+  {
+    "file": "../arxiv_research_companion/test_full_pipeline.py",
+    "agent": "static_analysis",
+    "error": true,
+    "returncode": 1,
+    "stderr": "Traceback (most recent call last):\n  File \"/mnt/c/Users/jaafo/3a/project/code_review_system/agents/static_analysis.py\", line 10, in <module>\n    import redis\nModuleNotFoundError: No module named 'redis'\n"
+  },
+  {
+    "file": "../arxiv_research_companion/test_full_pipeline.py",
+    "agent": "code_understanding",
+    "error": true,
+    "returncode": 1,
+    "stderr": "Traceback (most recent call last):\n  File \"/mnt/c/Users/jaafo/3a/project/code_review_system/agents/code_understanding.py\", line 11, in <module>\n    import requests\nModuleNotFoundError: No module named 'requests'\n"
+  },
+  {
+    "file": "../arxiv_research_companion/test_full_pipeline.py",
+    "agent": "improvement_suggestion",
+    "error": true,
+    "returncode": 1,
+    "stderr": "Traceback (most recent call last):\n  File \"/mnt/c/Users/jaafo/3a/project/code_review_system/agents/improvement_suggestion.py\", line 11, in <module>\n    import requests\nModuleNotFoundError: No module named 'requests'\n"
+  },
+  {
+    "file": "../arxiv_research_companion/test_full_pipeline.py",
+    "agent": "test_generator",
+    "error": true,
+    "returncode": 1,
+    "stderr": "Traceback (most recent call last):\n  File \"/mnt/c/Users/jaafo/3a/project/code_review_system/agents/test_generator.py\", line 11, in <module>\n    import requests\nModuleNotFoundError: No module named 'requests'\n"
+  },
+  {
+    "file": "../arxiv_research_companion/test_full_pipeline.py",
+    "agent": "documentation_agent",
+    "error": true,
+    "returncode": 1,
+    "stderr": "Traceback (most recent call last):\n  File \"/mnt/c/Users/jaafo/3a/project/code_review_system/agents/documentation_agent.py\", line 11, in <module>\n    import requests\nModuleNotFoundError: No module named 'requests'\n"
+  }
+]

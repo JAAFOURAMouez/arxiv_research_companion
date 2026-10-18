@@ -1,0 +1,8 @@
+{
+  "_comment": "Fill these yourself from the primary source (MTEB/BEIR leaderboard or the model card) and record where you read them. They are intentionally null: nothing here was looked up or computed by the author of the scripts.",
+  "tolerance_ndcg10": 0.02,
+  "tolerance_note": "0.02 is an arbitrary default. Pick your own and write down why.",
+  "scifact": {
+    "all-MiniLM-L6-v2": {"ndcg@10": null, "source_url": null, "read_on": null}
+  }
+}
