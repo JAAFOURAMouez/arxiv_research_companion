@@ -1,9 +1,0 @@
-[server]
-headless = true
-fileWatcherType = "none"
-
-[browser]
-gatherUsageStats = false
-
-[theme]
-base = "light"

@@ -2,9 +2,11 @@
 """
 Test script to check the full RAG pipeline
 """
-
 import sys
-sys.path.insert(0, '/mnt/c/Users/jaafo/3a/arxiv_research_companion')
+import os
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+
 
 from arxiv_research_companion.config import load_config
 from arxiv_research_companion.embedding_store import initialize_vector_store

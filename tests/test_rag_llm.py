@@ -2,10 +2,12 @@
 """
 Test script to check if the RAG engine's LLM interaction is working
 """
+import sys
+import os
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 
 import os
-import sys
-sys.path.insert(0, '/mnt/c/Users/jaafo/3a/arxiv_research_companion')
 
 from dotenv import load_dotenv
 from huggingface_hub import InferenceClient

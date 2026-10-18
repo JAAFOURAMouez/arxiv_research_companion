@@ -1,6 +1,5 @@
 -r requirements.txt
-sentence-transformers>=2.2.0
+pytest>=8.0
 gradio>=3.20.0
-pytest>=6.0.0
 black>=21.0.0
 flake8>=3.8.0

@@ -1,0 +1,10 @@
+{
+  "created_utc": "2026-10-18T20:37:17+00:00",
+  "snapshot_sha256": "002d5a0fefe200d21d4fe1e7d2a1e19871c284b6c850fe5ea0d25cc73baa9c0e",
+  "db_sha256": "5c17e87650817e6c9bf5650b716a31fd349b1a1f2d3f46cb2bf7e87e8f495533",
+  "n_prod": 300,
+  "n_labeled_extra": 0,
+  "labeled_ids_total": 105,
+  "labeled_ids_in_prod": 105,
+  "labeled_ids_unresolved": []
+}

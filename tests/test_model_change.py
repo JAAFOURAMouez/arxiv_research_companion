@@ -1,27 +1,30 @@
 #!/usr/bin/env python3
 """
-Test script to check if the Hugging Face Inference API is working
+Test script to verify the model change works
 """
-
+import sys
 import os
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+
+
 from dotenv import load_dotenv
 from huggingface_hub import InferenceClient
+import os
 
 # Load environment variables
 load_dotenv()
 
-def test_hf_inference():
-    """Test the Hugging Face Inference API directly"""
-    print("Testing Hugging Face Inference API...")
+def test_model_change():
+    """Test that the model change works"""
+    print("Testing model change to openai/gpt-oss-20b...")
 
     # Get configuration from environment
     model_name = os.getenv("LLM_MODEL_NAME", "openai/gpt-oss-120b")
     api_token = os.getenv("HF_API_TOKEN", "")
-    provider = os.getenv("HF_INFERENCE_PROVIDER", None)
 
     print(f"Model: {model_name}")
     print(f"Token set: {bool(api_token)}")
-    print(f"Provider: {provider}")
 
     if not api_token:
         print("ERROR: HF_API_TOKEN not set in environment")
@@ -30,10 +33,6 @@ def test_hf_inference():
     try:
         # Initialize client
         client_options = {'model': model_name, 'token': api_token}
-        if provider:
-            client_options['provider'] = provider
-
-        print(f"Initializing client with options: {client_options}")
         client = InferenceClient(**client_options)
 
         # Test with a simple prompt
@@ -54,20 +53,23 @@ def test_hf_inference():
             message = choices[0].get('message') if isinstance(choices[0], dict) else getattr(choices[0], 'message', None)
             content = message.get('content') if isinstance(message, dict) else getattr(message, 'content', None)
             print(f"Response content: {content}")
-            return True
+            if content and isinstance(content, str) and content.strip():
+                print("✅ Model change test PASSED - got non-empty response")
+                return True
+            else:
+                print("❌ Model change test FAILED - empty response")
+                return False
         else:
-            print("ERROR: No choices in response")
+            print("❌ No choices in response")
             return False
 
     except Exception as e:
-        print(f"ERROR: Exception occurred: {e}")
+        print(f"❌ Exception occurred: {e}")
         import traceback
         traceback.print_exc()
         return False
 
 if __name__ == "__main__":
-    success = test_hf_inference()
-    if success:
-        print("\n✅ LLM test PASSED")
-    else:
-        print("\n❌ LLM test FAILED")
+    success = test_model_change()
+    if not success:
+        sys.exit(1)

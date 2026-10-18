@@ -2,9 +2,11 @@
 """
 Test script to check if data ingestion is working with increased timeout
 """
-
 import sys
-sys.path.insert(0, '/mnt/c/Users/jaafo/3a/arxiv_research_companion')
+import os
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+
 
 from arxiv_research_companion.data_ingestion import ingest_new_papers
 import tempfile
