@@ -47,6 +47,9 @@ class TestConfig(unittest.TestCase):
             'INTERFACE_PORT',
             'LOG_LEVEL'
         ]
+        # A developer's own .env (loaded by another test) must not shadow the test values.
+        for var in self.vars_to_clear:
+            os.environ.pop(var, None)
 
     def tearDown(self):
         # Clean up the temporary directory

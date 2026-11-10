@@ -10,7 +10,9 @@ import requests
 from arxiv_research_companion import data_ingestion as di
 from arxiv_research_companion import ingest_cli
 
-BASE = datetime(2026, 10, 1, 0, 0, tzinfo=timezone.utc)
+# Relative to now: an empty database is ingested from "now - 30 days", so a fixed date
+# would silently fall out of that window and break these tests a month later.
+BASE = datetime.now(timezone.utc).replace(second=0, microsecond=0) - timedelta(days=1)
 
 
 def corpus(n):

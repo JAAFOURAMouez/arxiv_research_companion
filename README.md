@@ -41,58 +41,51 @@ The system follows a clean, layered architecture:
    cd arxiv_research_companion
    ```
 
-2. Create a virtual environment:
+2. Install dependencies (exactly what `uv.lock` pins):
    ```bash
-   python -m venv venv
-   source venv/bin/activate  # On Windows: venv\Scripts\activate
+   uv sync --locked
    ```
 
-3. Install dependencies:
-   ```bash
-   pip install -r requirements.txt
-   ```
-
-4. (Optional) Set up environment variables:
-   ```bash
-   cp .env.example .env
-   # Edit .env to add your Hugging Face API token if desired
-   ```
+3. Set your API key: copy `secrets.toml.example` to `.streamlit/secrets.toml` and fill in `GROQ_API_KEY`.
 
 ### Usage
 
-To start the application (which will also ingest initial data):
-
 ```bash
-python -m arxiv_research_companion.main
+uv run streamlit run streamlit_app.py
 ```
 
-Then open your browser to the URL shown in the output (typically http://localhost:7860).
+Then open the URL shown in the output (typically http://localhost:8501).
+
+The legacy Gradio front-end is still available with `uv run python -m arxiv_research_companion.main`.
 
 ## Project Structure
 
 ```
 arxiv_research_companion/
+├── streamlit_app.py                   # Streamlit app (deployed entry point)
 ├── arxiv_research_companion/          # Main package
-│   ├── __init__.py
-│   ├── data_ingestion.py              # arXiv API ingestion
-│   ├── embedding_store.py             # Embedding generation & vector storage
+│   ├── data_ingestion.py              # arXiv API ingestion (SQLite)
+│   ├── ingest_cli.py                  # CLI used by the nightly ingestion workflow
+│   ├── embedders.py                   # ONNX / sentence-transformers embedders
+│   ├── embedding_store.py             # Vector storage (ChromaDB)
+│   ├── retrieval.py                   # dense / BM25 / hybrid / rerank retrieval
 │   ├── rag_engine.py                  # RAG pipeline: retrieve + generate
-│   ├── interface.py                   # Gradio web interface
+│   ├── citations.py                   # [n] citation validation and repair
+│   ├── llm_http.py                    # Groq HTTP client with retries
+│   ├── interface.py, main.py          # legacy Gradio interface
 │   ├── config.py                      # Configuration management
 │   └── utils.py                       # Helper functions
+├── eval/                              # Evaluation scripts (see eval/README.md)
 ├── tests/                             # Unit tests
-├── .gitignore
-├── LICENSE
-├── README.md
-├── requirements.txt
-└── setup.py
+├── arxiv_papers.db                    # Paper database, updated nightly by CI
+├── pyproject.toml, uv.lock            # Dependencies (source of truth)
+└── requirements.txt                   # Exported from uv.lock for Streamlit Cloud
 ```
 
 ## Configuration
 
 Configuration is managed via:
 - Environment variables (loaded via python-dotenv)
-- A `config.yaml` file (optional, for non-secrets)
 - Default values in `config.py`
 
 Key configurable parameters:
@@ -142,7 +135,7 @@ This project is licensed under the MIT License - see the LICENSE file for detail
 ## Development (uv, tests, CI)
 
 ```bash
-uv lock && make requirements   # first time: creates uv.lock; requirements.txt (Streamlit Cloud) is exported from it
+make lock                      # after changing pyproject.toml: updates uv.lock and requirements.txt (Streamlit Cloud)
 uv sync --locked               # install exactly what is locked
 uv run pytest -m "not slow and not network"   # unit tests + Streamlit AppTest (no network)
 uv run streamlit run streamlit_app.py

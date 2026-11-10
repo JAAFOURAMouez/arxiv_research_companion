@@ -5,7 +5,6 @@ a measured result: `results/RESULTS.md` is generated from the JSON your runs pro
 `results/RESULTS_TEMPLATE.md` shows its shape with blanks.
 
 ```bash
-uv lock                      # first time only: creates uv.lock (commit it) and requirements.txt
 uv sync --group eval         # ranx, sentence-transformers (torch), transformers, ragas ...
 export GROQ_API_KEY=...      # generation + LLM judge + RAGAS
 bash eval/run_all.sh         # or run the steps below one by one
@@ -14,7 +13,7 @@ bash eval/run_all.sh         # or run the steps below one by one
 ## 0. Inputs you provide
 | file | what |
 |---|---|
-| `eval/data/questions.csv` | 40 rows: `qid, question, relevant_arxiv_ids` (IDs separated by `;`). Label from arxiv.org **without running the app**. The shipped file is an empty template. |
+| `eval/data/questions.csv` | 40 rows: `qid, question, relevant_arxiv_ids` (IDs separated by `;`). Label from arxiv.org **without running the app**. |
 | `eval/data/ooc_questions.csv` | 14 **draft** out-of-corpus questions (6 off-topic, 6 in-domain-but-absent, 2 false-premise). I only checked by keyword that the in-domain topics have no hit in the 300 stored abstracts. `validate_labels --ooc` prints the closest titles: read them, delete any question a stored paper could answer, then set `audited=true`. Unaudited rows are ignored by `refusal_eval`. |
 | `eval/data/published_reference.json` | the published SciFact nDCG@10 for all-MiniLM-L6-v2, **left null on purpose**: copy it from MTEB/BEIR with the URL. |
 | `eval/data/calibration_to_label.csv` | produced by `make_calibration_set`; you fill the `label` column. |

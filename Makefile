@@ -1,4 +1,4 @@
-.PHONY: lock sync test test-slow requirements eval-smoke
+.PHONY: lock sync test test-slow requirements
 
 lock:            ## (re)generate uv.lock and the deploy requirements.txt from it
 	uv lock

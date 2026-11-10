@@ -143,10 +143,6 @@ class TestHelpers(unittest.TestCase):
         self.assertEqual(len(qs), 1)
         self.assertEqual(qs[0]["relevant_arxiv_ids"], ["2610.00001", "2610.00002"])
 
-    def test_template_is_empty_so_nothing_runs_by_accident(self):
-        root = os.path.dirname(os.path.dirname(__file__))
-        self.assertEqual(load_questions(os.path.join(root, "eval/data/questions.csv")), [])
-
     def test_parse_feed_skips_error_entries(self):
         xml = """<feed xmlns="http://www.w3.org/2005/Atom">
           <entry><id>http://arxiv.org/abs/2610.00001v2</id><title> A  title </title><summary>S</summary>

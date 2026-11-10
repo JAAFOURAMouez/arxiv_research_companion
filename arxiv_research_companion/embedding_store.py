@@ -20,13 +20,16 @@ import hashlib
 from typing import List, Dict, Any, Optional
 import numpy as np
 
-# Import sentence transformers and chromadb
+# sentence-transformers (torch) is only installed with the eval group; chromadb is always
+# there. Import them separately so a missing sentence-transformers does not disable chromadb.
 try:
     from sentence_transformers import SentenceTransformer
+except ImportError:
+    SentenceTransformer = None
+try:
     import chromadb
 except ImportError as e:
-    logging.warning(f"Optional dependencies not available: {e}")
-    SentenceTransformer = None
+    logging.warning(f"chromadb not available: {e}")
     chromadb = None
 
 logger = logging.getLogger(__name__)
