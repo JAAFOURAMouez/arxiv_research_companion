@@ -90,3 +90,6 @@ media/
 results/*
 !results/RESULTS_TEMPLATE.md
 !results/.gitkeep
+
+# Prebuilt search index and ONNX model (render.yaml build step)
+.index/

@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>arXiv Research Companion</title>
+  <meta name="description" content="Ask a question about recent AI and machine-learning papers on arXiv. Every claim in the answer points to the paper it comes from.">
+  <meta name="color-scheme" content="light dark">
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+  <header class="masthead">
+    <a class="wordmark" href="/">arXiv Research Companion</a>
+    <p class="corpus" id="corpus" aria-live="polite"></p>
+  </header>
+
+  <main>
+    <section class="ask" aria-labelledby="ask-title">
+      <h1 id="ask-title">Ask the recent literature.</h1>
+      <p class="lede">
+        Answers are written from the abstracts of recent AI and machine-learning papers on arXiv.
+        Each sentence cites the paper it comes from, and sentences that cite nothing are removed.
+      </p>
+
+      <form id="ask-form" autocomplete="off">
+        <label class="visually-hidden" for="question">Your question</label>
+        <textarea id="question" name="question" rows="2" maxlength="500" required
+                  placeholder="What are the challenges in scaling large language models?"></textarea>
+        <div class="form-row">
+          <label class="k-field" for="k">
+            Papers to read
+            <select id="k" name="k">
+              <option value="3" selected>3</option>
+              <option value="5">5</option>
+              <option value="8">8</option>
+              <option value="10">10</option>
+            </select>
+          </label>
+          <button type="submit" id="submit" disabled>Ask</button>
+        </div>
+      </form>
+
+      <p class="notice" id="notice" role="status" hidden></p>
+
+      <div class="examples" id="examples">
+        <h2>Or start from one of these</h2>
+        <ul>
+          <li><button type="button" class="link">What are the latest developments in transformer architectures?</button></li>
+          <li><button type="button" class="link">How does reinforcement learning apply to robotics?</button></li>
+          <li><button type="button" class="link">What are recent advances in diffusion models for image generation?</button></li>
+          <li><button type="button" class="link">What are the challenges in scaling large language models?</button></li>
+        </ul>
+      </div>
+    </section>
+
+    <section id="results" class="results" aria-live="polite"></section>
+  </main>
+
+  <footer class="colophon">
+    <p id="colophon"></p>
+    <p>Only abstracts are read, not full papers. Check the source before relying on a claim.</p>
+  </footer>
+
+  <script src="/static/app.js" defer></script>
+</body>
+</html>

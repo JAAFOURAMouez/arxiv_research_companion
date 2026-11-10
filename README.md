@@ -5,13 +5,13 @@ An AI-powered research assistant that helps users quickly find and synthesize in
 ## Features
 
 - Fetches papers from arXiv API (categories: cs.AI, cs.LG, stat.ML, etc.)
-- Creates semantic embeddings using sentence-transformers
+- Creates semantic embeddings with all-MiniLM-L6-v2 (ONNX, no PyTorch)
 - Stores embeddings in a vector database (ChromaDB)
 - Retrieves relevant paper abstracts for user queries
-- Generates grounded answers using LLMs (via Hugging Face Inference API)
+- Generates grounded answers with an LLM on Groq (Hugging Face Inference API also supported)
 - Provides citations to source papers
 - Incremental updates: only processes new papers since last run
-- Web interface built with Gradio for easy interaction
+- Web interface: a plain HTML/CSS/JS page over a small FastAPI API
 - Designed to run on CPU-only environments (WSL2/Linux compatible)
 - Uses only free APIs and open-source tools
 
@@ -22,7 +22,7 @@ The system follows a clean, layered architecture:
 1. **Data Ingestion Layer**: Fetches and parses arXiv papers, handles deduplication
 2. **Embedding & Vector Storage Layer**: Generates embeddings and manages similarity search
 3. **RAG Engine Layer**: Retrieves relevant context and generates answers with LLMs
-4. **Presentation Layer**: Gradio-based web interface for user interaction
+4. **Presentation Layer**: FastAPI server and the static page in `web/`
 5. **Configuration & Utilities**: Centralized config, logging, and helper functions
 
 ## Getting Started
@@ -46,23 +46,43 @@ The system follows a clean, layered architecture:
    uv sync --locked
    ```
 
-3. Set your API key: copy `secrets.toml.example` to `.streamlit/secrets.toml` and fill in `GROQ_API_KEY`.
+3. Set your API key: copy `.env.example` to `.env` and fill in `GROQ_API_KEY`.
 
 ### Usage
 
 ```bash
-uv run streamlit run streamlit_app.py
+uv run uvicorn arxiv_research_companion.server:app --reload
 ```
 
-Then open the URL shown in the output (typically http://localhost:8501).
+Then open http://localhost:8000. The page is plain HTML/CSS/JS in `web/`, served by a small
+FastAPI app (`arxiv_research_companion/server.py`) that exposes `/api/status` and `/api/ask`.
 
-The legacy Gradio front-end is still available with `uv run python -m arxiv_research_companion.main`.
+The previous Streamlit front-end (`uv run streamlit run streamlit_app.py`) still works and will be
+removed once the Render deployment is live.
+
+### Deploying on Render (free plan)
+
+`render.yaml` describes the service. In the Render dashboard: **New > Blueprint**, pick this
+repository, then type `GROQ_API_KEY` when asked. Render then:
+
+* builds with `pip install -r requirements.txt` and embeds every paper ahead of time
+  (`python -m arxiv_research_companion.app_state`), so a cold start only loads the index;
+* starts `uvicorn` on `$PORT` and checks `/healthz`;
+* redeploys on every push to the tracked branch.
+
+Measured locally: about 380 MB peak RAM (free plan: 512 MB). Embedding runs without the ONNX
+memory arena and in batches of 8 (`ONNX_BATCH_SIZE`); the default chromadb settings peaked
+around 760 MB. Free instances sleep after 15 minutes idle, so the first visit after that waits
+for a restart. `RATE_LIMIT_PER_MINUTE` (default 10) caps questions per visitor, since every
+question spends your Groq quota.
 
 ## Project Structure
 
 ```
 arxiv_research_companion/
-├── streamlit_app.py                   # Streamlit app (deployed entry point)
+├── web/                               # Front-end: index.html, styles.css, app.js
+├── render.yaml                        # Render deployment
+├── streamlit_app.py                   # previous Streamlit front-end (to be removed)
 ├── arxiv_research_companion/          # Main package
 │   ├── data_ingestion.py              # arXiv API ingestion (SQLite)
 │   ├── ingest_cli.py                  # CLI used by the nightly ingestion workflow
@@ -70,6 +90,8 @@ arxiv_research_companion/
 │   ├── embedding_store.py             # Vector storage (ChromaDB)
 │   ├── retrieval.py                   # dense / BM25 / hybrid / rerank retrieval
 │   ├── rag_engine.py                  # RAG pipeline: retrieve + generate
+│   ├── server.py                      # FastAPI: JSON API + static front-end
+│   ├── app_state.py                   # builds config, index and retriever (also the build step)
 │   ├── citations.py                   # [n] citation validation and repair
 │   ├── llm_http.py                    # Groq HTTP client with retries
 │   ├── interface.py, main.py          # legacy Gradio interface
@@ -79,7 +101,7 @@ arxiv_research_companion/
 ├── tests/                             # Unit tests
 ├── arxiv_papers.db                    # Paper database, updated nightly by CI
 ├── pyproject.toml, uv.lock            # Dependencies (source of truth)
-└── requirements.txt                   # Exported from uv.lock for Streamlit Cloud
+└── requirements.txt                   # Exported from uv.lock (installed by Render)
 ```
 
 ## Configuration
@@ -135,10 +157,10 @@ This project is licensed under the MIT License - see the LICENSE file for detail
 ## Development (uv, tests, CI)
 
 ```bash
-make lock                      # after changing pyproject.toml: updates uv.lock and requirements.txt (Streamlit Cloud)
+make lock                      # after changing pyproject.toml: updates uv.lock and requirements.txt (Render installs it)
 uv sync --locked               # install exactly what is locked
-uv run pytest -m "not slow and not network"   # unit tests + Streamlit AppTest (no network)
-uv run streamlit run streamlit_app.py
+uv run pytest -m "not slow and not network"   # unit + API tests (no network)
+uv run uvicorn arxiv_research_companion.server:app --reload
 ```
 
 * GitHub Actions: `ci.yml` (locked install, requirements/lock drift check, pytest incl. AppTest) and

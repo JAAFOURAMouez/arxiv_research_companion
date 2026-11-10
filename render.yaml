@@ -1,0 +1,21 @@
+# Render blueprint: Dashboard -> New -> Blueprint -> pick this repository.
+services:
+  - type: web
+    name: arxiv-research-companion
+    runtime: python
+    plan: free
+    # Embeds the papers during the build (faster machine) so a cold start only loads the index.
+    # If the prebuilt index is missing at runtime, the server rebuilds it on startup.
+    buildCommand: pip install -r requirements.txt && python -m arxiv_research_companion.app_state
+    startCommand: uvicorn arxiv_research_companion.server:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /healthz
+    autoDeploy: true
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.12.7
+      - key: ARC_CHROMA_DIR
+        value: .index/chroma
+      - key: ONNX_MODEL_DIR
+        value: .index/onnx
+      - key: GROQ_API_KEY
+        sync: false   # typed in the Render dashboard, never committed

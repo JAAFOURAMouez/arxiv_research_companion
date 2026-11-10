@@ -1,11 +1,13 @@
 [project]
 name = "arxiv-research-companion"
 version = "0.2.0"
-description = "RAG assistant over arXiv abstracts (Streamlit)."
+description = "RAG assistant over arXiv abstracts."
 readme = "README.md"
 requires-python = ">=3.12,<3.13"
 dependencies = [
-    "streamlit>=1.35.0",
+    "fastapi>=0.110",
+    "uvicorn>=0.30",
+    "streamlit>=1.35.0",   # legacy front-end (streamlit_app.py); remove once Render is live
     "chromadb>=1.0.0",
     "numpy>=1.26",
     "requests>=2.25.1",
@@ -17,6 +19,7 @@ dependencies = [
 [dependency-groups]
 dev = [
     "pytest>=8.0",
+    "httpx>=0.27",      # fastapi.testclient
     "gradio>=3.20.0",   # tests/test_interface.py imports the Gradio front-end
 ]
 # Evaluation only (eval/): never installed on the deployed app.

@@ -140,17 +140,20 @@ version = "0.2.0"
 source = { virtual = "." }
 dependencies = [
     { name = "chromadb" },
+    { name = "fastapi" },
     { name = "huggingface-hub" },
     { name = "numpy" },
     { name = "pydantic" },
     { name = "python-dotenv" },
     { name = "requests" },
     { name = "streamlit" },
+    { name = "uvicorn" },
 ]
 
 [package.dev-dependencies]
 dev = [
     { name = "gradio" },
+    { name = "httpx" },
     { name = "pytest" },
 ]
 eval = [
@@ -165,17 +168,20 @@ eval = [
 [package.metadata]
 requires-dist = [
     { name = "chromadb", specifier = ">=1.0.0" },
+    { name = "fastapi", specifier = ">=0.110" },
     { name = "huggingface-hub", specifier = ">=0.24.0" },
     { name = "numpy", specifier = ">=1.26" },
     { name = "pydantic", specifier = ">=1.8.0" },
     { name = "python-dotenv", specifier = ">=0.19.0" },
     { name = "requests", specifier = ">=2.25.1" },
     { name = "streamlit", specifier = ">=1.35.0" },
+    { name = "uvicorn", specifier = ">=0.30" },
 ]
 
 [package.metadata.requires-dev]
 dev = [
     { name = "gradio", specifier = ">=3.20.0" },
+    { name = "httpx", specifier = ">=0.27" },
     { name = "pytest", specifier = ">=8.0" },
 ]
 eval = [
