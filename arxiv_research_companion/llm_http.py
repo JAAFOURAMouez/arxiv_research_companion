@@ -1,5 +1,6 @@
 """
-HTTP helper with bounded retries for OpenAI-compatible chat endpoints (Groq).
+HTTP helper with bounded retries for OpenAI-compatible chat endpoints
+(Ollama, Groq, OpenAI, OpenRouter; see ``PROVIDERS``).
 
 Retries on HTTP 429 and 5xx (500/502/503/504) and on connection errors / timeouts, with
 exponential backoff + jitter.  A ``Retry-After`` header is honoured, but a server asking
@@ -11,8 +12,10 @@ Other 4xx responses are never retried.
 from __future__ import annotations
 
 import logging
+import os
 import random
 import time
+from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Optional
 
 import requests
@@ -21,6 +24,51 @@ logger = logging.getLogger(__name__)
 
 GROQ_CHAT_URL = "https://api.groq.com/openai/v1/chat/completions"
 RETRYABLE_STATUS = frozenset({429, 500, 502, 503, 504})
+
+DEFAULT_OLLAMA_URL = "http://localhost:11434"
+
+
+@dataclass(frozen=True)
+class Provider:
+    """An OpenAI-compatible chat endpoint the app can talk to."""
+
+    id: str
+    label: str
+    chat_url: str
+    key_env: Optional[str]          # env var holding the server-side key; None = no key needed
+    default_model: str
+    token_param: str = "max_completion_tokens"
+    local: bool = False
+
+    @property
+    def needs_key(self) -> bool:
+        return self.key_env is not None
+
+
+def ollama_base_url() -> str:
+    """Where Ollama listens (OLLAMA_BASE_URL, e.g. http://host.docker.internal:11434)."""
+    return (os.getenv("OLLAMA_BASE_URL") or DEFAULT_OLLAMA_URL).rstrip("/")
+
+
+PROVIDERS: Dict[str, Provider] = {
+    p.id: p
+    for p in (
+        Provider("ollama", "Ollama (local)", f"{DEFAULT_OLLAMA_URL}/v1/chat/completions", None,
+                 "llama3.2", token_param="max_tokens", local=True),
+        Provider("groq", "Groq", GROQ_CHAT_URL, "GROQ_API_KEY", "openai/gpt-oss-120b"),
+        Provider("openai", "OpenAI", "https://api.openai.com/v1/chat/completions", "OPENAI_API_KEY",
+                 "gpt-4o-mini"),
+        Provider("openrouter", "OpenRouter", "https://openrouter.ai/api/v1/chat/completions",
+                 "OPENROUTER_API_KEY", "meta-llama/llama-3.3-70b-instruct", token_param="max_tokens"),
+    )
+}
+
+
+def chat_url(provider: str) -> str:
+    """Chat endpoint of ``provider``; Ollama's honours OLLAMA_BASE_URL at call time."""
+    if provider == "ollama":
+        return f"{ollama_base_url()}/v1/chat/completions"
+    return PROVIDERS[provider].chat_url
 
 
 class LlmHttpError(RuntimeError):
@@ -117,30 +165,37 @@ def chat_completion(
     temperature: float,
     top_p: Optional[float] = None,
     timeout: float = 60.0,
-    url: str = GROQ_CHAT_URL,
+    url: Optional[str] = None,
+    provider: str = "groq",
     max_attempts: int = 4,
     base_delay: float = 1.0,
     max_delay: float = 20.0,
     sleep: Callable[[float], None] = time.sleep,
 ) -> str:
     """POST an OpenAI-style chat completion and return the message content."""
-    if not api_key:
-        raise ValueError("GROQ_API_KEY is not set")
+    spec = PROVIDERS.get(provider)
+    if spec is None:
+        raise ValueError(f"Unknown LLM provider: {provider}")
+    if spec.needs_key and not api_key:
+        raise ValueError(f"{spec.key_env} is not set")
     payload: Dict[str, Any] = {
         "model": model,
         "messages": messages,
-        "max_completion_tokens": max_tokens,
+        spec.token_param: max_tokens,
         "temperature": temperature,
     }
     if top_p is not None:
         payload["top_p"] = top_p
-    if model.startswith("openai/gpt-oss"):
+    if provider == "groq" and model.startswith("openai/gpt-oss"):
         # reasoning models: keep reasoning short so tokens are left for the answer
         payload["reasoning_effort"] = "low"
 
+    headers = {"Content-Type": "application/json"}
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
     response = post_with_retry(
-        url,
-        headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+        url or chat_url(provider),
+        headers=headers,
         json_payload=payload,
         timeout=timeout,
         max_attempts=max_attempts,
@@ -151,5 +206,5 @@ def chat_completion(
     data = response.json()
     choices = data.get("choices") or []
     if not choices:
-        raise ValueError("Groq chat completion returned no choices")
+        raise ValueError(f"{spec.label} chat completion returned no choices")
     return (choices[0].get("message") or {}).get("content")

@@ -7,6 +7,7 @@ Run the real generation path (rag_engine.generate_answer) over the question sets
 Uses the app's own defaults (k=3, temperature 0.7, 800 tokens, citation enforcement on, one
 repair round) unless overridden, and records everything needed by the checkers: raw and final
 answer, retrieved IDs in order, top-1 dense cosine, citation-enforcement info, errors.
+No Groq key? Run it on a local Ollama: LLM_PROVIDER=ollama LLM_MODEL_NAME=llama3.2 python -m eval.generate_answers ...
 Resumable (--resume): already answered qids are skipped, so a Groq rate limit costs nothing.
 """
 from __future__ import annotations
@@ -18,6 +19,7 @@ import time
 from pathlib import Path
 
 from arxiv_research_companion.config import load_config
+from arxiv_research_companion.llm_http import PROVIDERS
 from arxiv_research_companion.rag_engine import generate_answer
 from arxiv_research_companion.retrieval import doc_text
 from eval.common import (RESULTS_DIR, cached_embeddings, is_smoke, load_questions, load_snapshot,
@@ -61,16 +63,33 @@ def main(argv=None) -> int:
     config = {**cfg, "retrieval_k": args.k,
               "llm": {**cfg["llm"], "temperature": args.temperature, "max_new_tokens": args.max_tokens},
               "citations": {**cfg["citations"], "enforce": not args.no_enforce}}
-    if not config["llm"]["groq_api_key"] and not config["llm"]["api_token"]:
-        print("ERROR: set GROQ_API_KEY (or HF_API_TOKEN)", file=sys.stderr)
+    llm_cfg = config["llm"]
+    provider = llm_cfg["provider"]
+    if provider == "huggingface_api":
+        usable = bool(llm_cfg["api_token"])
+    else:
+        usable = not PROVIDERS[provider].needs_key or bool(llm_cfg.get(f"{provider}_api_key"))
+    if not usable:
+        print("ERROR: no key for the LLM provider '%s'. Set its API key, or use LLM_PROVIDER=ollama "
+              "(local, no key)." % provider, file=sys.stderr)
         return 1
 
     items = [{**q, "kind": "in_scope"} for q in load_questions(args.questions)]
     if args.ooc:
         items += [{**q, "kind": "ooc"} for q in load_questions(args.ooc)]
     out_path = Path(args.out)
-    done = {r["qid"] for r in read_jsonl(out_path)} if args.resume and out_path.exists() else set()
     out_path.parent.mkdir(parents=True, exist_ok=True)
+    done: set = set()
+    if args.resume and out_path.exists():
+        # Keep only usable answers: an LLM failure (rate limit, server down) is retried, not frozen.
+        old = read_jsonl(out_path)
+        kept = [r for r in old if not r["degraded"] or r["refused"]]
+        if len(kept) != len(old):
+            print(f"resume: redoing {len(old) - len(kept)} answer(s) that failed earlier", flush=True)
+            with open(out_path, "w", encoding="utf-8") as fh:
+                for r in kept:
+                    fh.write(json.dumps(r, ensure_ascii=False) + "\n")
+        done = {r["qid"] for r in kept}
     mode_w = "a" if args.resume and out_path.exists() else "w"
     with open(out_path, mode_w, encoding="utf-8") as fh:
         for n, item in enumerate(items, 1):

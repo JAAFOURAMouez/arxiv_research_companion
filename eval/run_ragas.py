@@ -4,8 +4,8 @@ RAGAS faithfulness on the generated answers (in-scope, answered, non-refused onl
     GROQ_API_KEY=... python -m eval.run_ragas --answers results/answers.jsonl \
         --snapshot eval/data/corpus_snapshot.jsonl
 
-The judge is an LLM of a different family from the generator (default Llama on Groq, JUDGE_MODEL
-to change).  `[n]` markers are stripped from the answer first.  Contexts = the retrieved abstracts
+The judge is an LLM of a different family from the generator (default Llama on Groq, or Qwen on
+Ollama with JUDGE_PROVIDER=ollama; JUDGE_MODEL to change).  `[n]` markers are stripped from the answer first.  Contexts = the retrieved abstracts
 exactly as shown to the generator.
 
 Written against the ragas >= 0.2 API (SingleTurnSample / EvaluationDataset / Faithfulness /
@@ -23,21 +23,24 @@ import numpy as np
 from arxiv_research_companion.citations import strip_citation_markers
 from eval import metrics as M
 from eval.common import RESULTS_DIR, load_snapshot, read_jsonl, run_meta, write_json
-from eval.judges import DEFAULT_JUDGE_MODEL
+from eval.judges import default_judge_model, judge_api_key, judge_provider
 
 
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--answers", default=str(RESULTS_DIR / "answers.jsonl"))
     ap.add_argument("--snapshot", default="eval/data/corpus_snapshot.jsonl")
-    ap.add_argument("--judge-model", default=os.getenv("JUDGE_MODEL") or DEFAULT_JUDGE_MODEL)
+    ap.add_argument("--judge-model", default=default_judge_model())
     ap.add_argument("--max-workers", type=int, default=1, help="keep low: Groq free-tier rate limits")
     ap.add_argument("--out", default=str(RESULTS_DIR / "ragas.json"))
     args = ap.parse_args(argv)
 
-    key = os.getenv("GROQ_API_KEY")
+    from arxiv_research_companion.llm_http import PROVIDERS, chat_url
+
+    provider = judge_provider()
+    key = judge_api_key(provider)
     if not key:
-        print("ERROR: GROQ_API_KEY not set", file=sys.stderr)
+        print(f"ERROR: {PROVIDERS[provider].key_env} not set", file=sys.stderr)
         return 1
     from langchain_openai import ChatOpenAI
     from ragas import EvaluationDataset, SingleTurnSample, evaluate  # ragas-api
@@ -54,7 +57,7 @@ def main(argv=None) -> int:
         samples.append(SingleTurnSample(user_input=r["question"], response=strip_citation_markers(r["answer"]),
                                         retrieved_contexts=ctx))
     llm = LangchainLLMWrapper(ChatOpenAI(model=args.judge_model, api_key=key, temperature=0,
-                                         base_url="https://api.groq.com/openai/v1"))
+                                         base_url=chat_url(provider).rsplit("/chat/completions", 1)[0]))
     res = evaluate(EvaluationDataset(samples=samples), metrics=[Faithfulness()], llm=llm,
                    run_config=RunConfig(max_workers=args.max_workers, timeout=120, max_retries=6))
     df = res.to_pandas()

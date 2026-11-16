@@ -43,4 +43,5 @@ addopts = "-ra"
 markers = [
     "slow: loads real models (needs network on first run); excluded from the default CI job",
     "network: needs internet access",
+    "ollama: talks to a real local Ollama server (auto-skipped when none is running)",
 ]

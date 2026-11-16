@@ -10,6 +10,13 @@
   var results = document.getElementById("results");
   var corpus = document.getElementById("corpus");
   var colophon = document.getElementById("colophon");
+  var providerSelect = document.getElementById("provider");
+  var modelInput = document.getElementById("model");
+  var modelOptions = document.getElementById("model-options");
+  var keyInput = document.getElementById("api-key");
+  var keyField = document.getElementById("key-field");
+  var modelHint = document.getElementById("model-hint");
+  var modelSummary = document.getElementById("model-summary");
 
   var MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
   var ready = false;
@@ -42,6 +49,121 @@
     examples.querySelectorAll("button").forEach(function (b) { b.disabled = locked; });
   }
 
+  /* ---- model picker ---------------------------------------------------- */
+
+  var providers = [];
+  var serverDefault = null;
+  var STORE = "arc.model";
+
+  function loadSaved() {
+    try { return JSON.parse(localStorage.getItem(STORE) || "{}"); } catch (e) { return {}; }
+  }
+
+  function save() {
+    try {
+      // The key stays in this tab only (sessionStorage); provider and model persist.
+      localStorage.setItem(STORE, JSON.stringify({ provider: providerSelect.value, model: modelInput.value }));
+      sessionStorage.setItem(STORE + ".key:" + providerSelect.value, keyInput.value);
+    } catch (e) { /* storage blocked: the picker still works for this page view */ }
+  }
+
+  function savedKey(provider) {
+    try { return sessionStorage.getItem(STORE + ".key:" + provider) || ""; } catch (e) { return ""; }
+  }
+
+  function currentProvider() {
+    return providers.filter(function (p) { return p.id === providerSelect.value; })[0];
+  }
+
+  function isServerDefault() {
+    var p = currentProvider();
+    return !!p && serverDefault && p.id === serverDefault.provider && modelInput.value.trim() === serverDefault.model;
+  }
+
+  function updateSummary() {
+    var p = currentProvider();
+    if (!p) return;
+    modelSummary.textContent = isServerDefault() && !keyInput.value
+      ? "server default (" + p.label + ", " + modelInput.value + ")"
+      : p.label + ", " + (modelInput.value || p.default_model);
+  }
+
+  function refreshOllama() {
+    modelOptions.textContent = "";
+    fetch("/api/ollama/models")
+      .then(function (r) { return r.json(); })
+      .then(function (d) {
+        if (providerSelect.value !== "ollama") return;
+        d.models.forEach(function (name) {
+          var o = document.createElement("option");
+          o.value = name;
+          modelOptions.appendChild(o);
+        });
+        modelHint.textContent = d.reachable
+          ? (d.models.length ? "Models found on the Ollama server: pick one or type a name."
+                             : "Ollama is running but has no model yet. Run: ollama pull " + modelInput.value)
+          : "Cannot reach Ollama from the server. Start it with `ollama serve`, or run this app on the " +
+            "machine where Ollama runs.";
+      })
+      .catch(function () {});
+  }
+
+  function onProviderChange(keepModel) {
+    var p = currentProvider();
+    if (!p) return;
+    if (!keepModel) modelInput.value = p.default_model;
+    keyField.hidden = !p.needs_key;
+    keyInput.value = savedKey(p.id);
+    modelOptions.textContent = "";
+    if (p.id === "ollama") {
+      refreshOllama();
+    } else if (p.needs_key) {
+      modelHint.textContent = p.server_key
+        ? "The server has its own key for " + p.label + " and uses it for the default model. " +
+          "Enter your key to pick another model or to use your own quota."
+        : "Enter your " + p.label + " API key. It is sent with your question and never stored on the server; " +
+          "it is kept in this browser tab only.";
+    } else {
+      modelHint.textContent = "";
+    }
+    updateSummary();
+    save();
+  }
+
+  function initPicker(data) {
+    providers = data.providers;
+    serverDefault = data.default;
+    var saved = loadSaved();
+    providers.forEach(function (p) {
+      var o = document.createElement("option");
+      o.value = p.id;
+      o.textContent = p.label;
+      providerSelect.appendChild(o);
+    });
+    var known = providers.some(function (p) { return p.id === saved.provider; });
+    providerSelect.value = known ? saved.provider : (serverDefault.provider || providers[0].id);
+    modelInput.value = known && saved.model ? saved.model : "";
+    onProviderChange(!!modelInput.value);
+    if (!modelInput.value) { modelInput.value = currentProvider().default_model; updateSummary(); }
+  }
+
+  function llmChoice() {
+    var p = currentProvider();
+    if (!p || (isServerDefault() && !keyInput.value)) return undefined;
+    return { provider: p.id, model: modelInput.value.trim(), api_key: keyInput.value.trim() };
+  }
+
+  providerSelect.addEventListener("change", function () { onProviderChange(false); });
+  modelInput.addEventListener("input", function () { updateSummary(); save(); });
+  keyInput.addEventListener("input", function () { updateSummary(); save(); });
+
+  function loadProviders() {
+    fetch("/api/providers")
+      .then(function (r) { return r.json(); })
+      .then(function (d) { if (d.providers && d.providers.length && !providers.length) initPicker(d); })
+      .catch(function () {});
+  }
+
   /* ---- status ---------------------------------------------------------- */
 
   function pollStatus() {
@@ -51,13 +173,14 @@
         if (s.ready) {
           ready = true;
           paperCount = s.papers;
+          loadProviders();
           var latest = prettyDate(s.last_paper_date);
           corpus.textContent = s.papers.toLocaleString("en") + " papers" + (latest ? " · latest " + latest : "");
-          colophon.textContent = "Answers written by " + s.model + " from papers found by " +
+          colophon.textContent = "By default, answers are written by " + s.model + " from papers found by " +
             s.retrieval_mode.replace("_", " + ") + " search.";
           showNotice(s.llm_configured ? "" :
-            "No language-model key is configured on this server, so answers cannot be written. " +
-            "The closest papers are still listed.");
+            "No language-model key is configured on this server. Choose a provider under Model and enter " +
+            "your own key (or use Ollama), otherwise only the closest papers are listed.");
           syncControls();
         } else if (s.error) {
           showNotice("The paper index could not be loaded: " + s.error);
@@ -194,7 +317,7 @@
     fetch("/api/ask", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ question: question, k: Number(kSelect.value) })
+      body: JSON.stringify({ question: question, k: Number(kSelect.value), llm: llmChoice() })
     })
       .then(function (r) {
         return r.json().catch(function () { return {}; }).then(function (data) {

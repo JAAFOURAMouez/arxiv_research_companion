@@ -115,5 +115,56 @@ class TestRetry(unittest.TestCase):
         self.assertEqual(fake2.calls[0]["reasoning_effort"], "low")
 
 
+
+class TestProviders(unittest.TestCase):
+    def call(self, provider, api_key, model="m", **kw):
+        seen = {}
+
+        def fake(url, headers=None, json=None, timeout=None):
+            seen.update(url=url, headers=headers, json=json)
+            return OK
+
+        with patch.object(llm_http.requests, "post", fake):
+            out = chat_completion([{"role": "user", "content": "hi"}], model=model, api_key=api_key,
+                                  max_tokens=10, temperature=0.0, provider=provider, **kw)
+        return out, seen
+
+    def test_ollama_needs_no_key_and_sends_no_auth_header(self):
+        out, seen = self.call("ollama", None)
+        self.assertEqual(out, "hello")
+        self.assertEqual(seen["url"], "http://localhost:11434/v1/chat/completions")
+        self.assertNotIn("Authorization", seen["headers"])
+        self.assertEqual(seen["json"]["max_tokens"], 10)
+        self.assertNotIn("max_completion_tokens", seen["json"])
+
+    def test_ollama_base_url_comes_from_the_environment(self):
+        with patch.dict("os.environ", {"OLLAMA_BASE_URL": "http://gpu-box:11434/"}):
+            _, seen = self.call("ollama", None)
+        self.assertEqual(seen["url"], "http://gpu-box:11434/v1/chat/completions")
+
+    def test_keyed_providers_use_their_own_endpoint_and_error_name(self):
+        for provider, host, env_name in (
+            ("groq", "api.groq.com", "GROQ_API_KEY"),
+            ("openai", "api.openai.com", "OPENAI_API_KEY"),
+            ("openrouter", "openrouter.ai", "OPENROUTER_API_KEY"),
+        ):
+            _, seen = self.call(provider, "k")
+            self.assertIn(host, seen["url"])
+            self.assertEqual(seen["headers"]["Authorization"], "Bearer k")
+            with self.assertRaises(ValueError) as ctx:
+                self.call(provider, "")
+            self.assertIn(env_name, str(ctx.exception))
+
+    def test_reasoning_effort_only_for_groq_gpt_oss(self):
+        _, groq = self.call("groq", "k", model="openai/gpt-oss-120b")
+        _, other = self.call("openrouter", "k", model="openai/gpt-oss-120b")
+        self.assertEqual(groq["json"]["reasoning_effort"], "low")
+        self.assertNotIn("reasoning_effort", other["json"])
+
+    def test_unknown_provider(self):
+        with self.assertRaises(ValueError):
+            self.call("nope", "k")
+
+
 if __name__ == "__main__":
     unittest.main()

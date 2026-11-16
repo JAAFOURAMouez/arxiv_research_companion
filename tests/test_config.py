@@ -78,6 +78,34 @@ class TestConfig(unittest.TestCase):
         self.assertEqual(config['interface']['port'], 8080)
         self.assertEqual(config['logging']['level'], 'DEBUG')
 
+    def test_llm_provider_is_validated_and_ollama_configurable(self):
+        env = Path(self.test_dir) / ".env_provider"
+        env.write_text("")
+        os.environ["LLM_PROVIDER"] = "ollama"
+        os.environ["OLLAMA_BASE_URL"] = "http://box:11434"
+        try:
+            config = load_config(str(env))
+            self.assertEqual(config["llm"]["provider"], "ollama")
+            self.assertEqual(config["llm"]["ollama_base_url"], "http://box:11434")
+            os.environ["LLM_PROVIDER"] = "bogus"
+            with self.assertRaises(ValueError):
+                load_config(str(env))
+        finally:
+            os.environ.pop("LLM_PROVIDER", None)
+            os.environ.pop("OLLAMA_BASE_URL", None)
+
+    def test_default_model_follows_the_provider(self):
+        env = Path(self.test_dir) / ".env_model"
+        env.write_text("")
+        try:
+            os.environ["LLM_PROVIDER"] = "ollama"
+            self.assertEqual(load_config(str(env))["llm"]["model_name"], "llama3.2")
+            os.environ["LLM_MODEL_NAME"] = "qwen2.5:7b"
+            self.assertEqual(load_config(str(env))["llm"]["model_name"], "qwen2.5:7b")
+        finally:
+            os.environ.pop("LLM_PROVIDER", None)
+            os.environ.pop("LLM_MODEL_NAME", None)
+
     def test_load_config_defaults(self):
         """Test that default values are used when .env doesn't specify values"""
         # Create a minimal .env file

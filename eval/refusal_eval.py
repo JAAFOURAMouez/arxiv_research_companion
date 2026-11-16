@@ -14,11 +14,12 @@ from __future__ import annotations
 
 import argparse
 import sys
+from pathlib import Path
 
 import numpy as np
 
 from eval import metrics as M
-from eval.common import RESULTS_DIR, read_jsonl, run_meta, write_json
+from eval.common import RESULTS_DIR, load_questions, read_jsonl, run_meta, write_json
 
 
 def rate(k, n):
@@ -29,6 +30,8 @@ def rate(k, n):
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--answers", default=str(RESULTS_DIR / "answers.jsonl"))
+    ap.add_argument("--ooc", default="eval/data/ooc_questions.csv",
+                    help="the audited flag is read from here, so auditing never requires regenerating")
     ap.add_argument("--include-unaudited", action="store_true")
     ap.add_argument("--out", default=str(RESULTS_DIR / "refusal.json"))
     args = ap.parse_args(argv)
@@ -36,7 +39,9 @@ def main(argv=None) -> int:
     recs = read_jsonl(args.answers)
     ins = [r for r in recs if r["kind"] == "in_scope"]
     ooc_all = [r for r in recs if r["kind"] == "ooc"]
-    aud = lambda r: str(r.get("audited", "")).lower() in ("1", "true", "yes")  # noqa: E731
+    flag = lambda v: str(v or "").strip().lower() in ("1", "true", "yes")  # noqa: E731
+    current = {q["qid"]: q.get("audited") for q in load_questions(args.ooc)} if Path(args.ooc).exists() else {}
+    aud = lambda r: flag(current.get(r["qid"], r.get("audited")))  # noqa: E731
     ooc = ooc_all if args.include_unaudited else [r for r in ooc_all if aud(r)]
     if not ooc:
         print("ERROR: no (audited) OOC records; run generate_answers with --ooc and audit the questions", file=sys.stderr)

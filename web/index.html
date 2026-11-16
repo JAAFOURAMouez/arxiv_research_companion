@@ -38,6 +38,25 @@
           </label>
           <button type="submit" id="submit" disabled>Ask</button>
         </div>
+
+        <details class="model-picker" id="model-picker">
+          <summary>Model: <span id="model-summary">server default</span></summary>
+          <div class="model-grid">
+            <label for="provider">Provider
+              <select id="provider" name="provider"></select>
+            </label>
+            <label for="model">Model
+              <input id="model" name="model" list="model-options" type="text" maxlength="120"
+                     spellcheck="false" autocapitalize="off" autocomplete="off">
+              <datalist id="model-options"></datalist>
+            </label>
+            <label for="api-key" id="key-field">API key
+              <input id="api-key" name="api-key" type="password" maxlength="400"
+                     spellcheck="false" autocomplete="off">
+            </label>
+          </div>
+          <p class="model-hint" id="model-hint"></p>
+        </details>
       </form>
 
       <p class="notice" id="notice" role="status" hidden></p>

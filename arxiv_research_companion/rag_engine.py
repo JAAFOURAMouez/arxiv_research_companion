@@ -19,7 +19,13 @@ from typing import Any, Dict, List, Optional
 from huggingface_hub import InferenceClient
 
 from arxiv_research_companion import citations
-from arxiv_research_companion.llm_http import GROQ_CHAT_URL, LlmHttpError, chat_completion  # noqa: F401
+from arxiv_research_companion.llm_http import (  # noqa: F401
+    GROQ_CHAT_URL,
+    PROVIDERS,
+    LlmHttpError,
+    chat_completion,
+    ollama_base_url,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -157,7 +163,10 @@ def generate_answer(query: str, vector_store: Dict[str, Any], config: Dict[str, 
     hf_api_token = llm_config.get("api_token") or config.get("hf_api_token") or None
     llm_timeout = llm_config.get("timeout", config.get("llm_timeout", 60.0))
     llm_provider = (llm_config.get("provider") or "huggingface_api").lower()
-    groq_api_key = llm_config.get("groq_api_key") or None
+    api_key = llm_config.get("api_key") or llm_config.get(f"{llm_provider}_api_key") or None
+    is_ollama = llm_provider == "ollama"
+    if is_ollama:  # local models load slowly the first time
+        llm_timeout = max(float(llm_timeout), 180.0)
     max_retries = int(llm_config.get("max_retries", 3))
     retry_base_delay = float(llm_config.get("retry_base_delay", 1.0))
 
@@ -187,12 +196,13 @@ def generate_answer(query: str, vector_store: Dict[str, Any], config: Dict[str, 
     )
 
     def complete(messages: List[Dict[str, str]]) -> str:
-        if llm_provider == "groq":
+        if llm_provider in PROVIDERS:
             return _call_groq_messages(
-                messages=messages, model=llm_model, api_key=groq_api_key,
+                messages=messages, model=llm_model, api_key=api_key,
                 max_tokens=llm_max_new_tokens, temperature=llm_temperature,
                 top_p=llm_top_p, timeout=llm_timeout,
                 max_attempts=max_retries + 1, base_delay=retry_base_delay,
+                provider=llm_provider,
             )
         client_options = {"model": llm_model, "token": hf_api_token, "timeout": llm_timeout}
         if hf_inference_provider:
@@ -222,7 +232,7 @@ def generate_answer(query: str, vector_store: Dict[str, Any], config: Dict[str, 
     except Exception as e:
         logger.exception("Error generating answer with LLM for model %s", llm_model)
         return {
-            "answer": _degraded_answer(llm_model, e, context),
+            "answer": _degraded_answer(llm_model, e, context, llm_provider),
             "sources": sources,
             "degraded": True,
             "llm_error": f"{type(e).__name__}: {e}",
@@ -280,10 +290,14 @@ def generate_answer(query: str, vector_store: Dict[str, Any], config: Dict[str, 
     return result
 
 
-def _degraded_answer(model: str, error: Exception, context: str) -> str:
+def _degraded_answer(model: str, error: Exception, context: str, provider: str = "") -> str:
     """Message shown when generation fails: says why, then lists the retrieved papers."""
     text = str(error)
-    if "model_not_supported" in text or "not supported by any provider" in text:
+    if provider == "ollama" and isinstance(error, LlmHttpError) and error.status is None:
+        hint = f"Cannot reach Ollama at {ollama_base_url()}. Start it with `ollama serve`."
+    elif provider == "ollama" and isinstance(error, LlmHttpError) and error.status == 404:
+        hint = f"Ollama does not have this model. Run `ollama pull {model}` first."
+    elif "model_not_supported" in text or "not supported by any provider" in text:
         hint = (
             "Enable an Inference Provider for your account (or choose a model supported by a "
             "provider you have enabled) and ensure your token can call Inference Providers."
@@ -297,8 +311,12 @@ def _degraded_answer(model: str, error: Exception, context: str) -> str:
         hint = f"The provider is rate-limiting requests (HTTP 429, {error.attempts} attempts). Try again shortly."
     elif isinstance(error, LlmHttpError) and error.status and error.status >= 500:
         hint = f"The provider returned HTTP {error.status} after {error.attempts} attempts. Try again shortly."
+    elif isinstance(error, LlmHttpError) and error.status in (401, 403):
+        hint = "The provider rejected the API key (HTTP %d). Check it and try again." % error.status
     elif isinstance(error, ValueError) and "GROQ_API_KEY" in text:
         hint = "No Groq API key is configured."
+    elif isinstance(error, ValueError) and text.endswith("_API_KEY is not set"):
+        hint = f"No API key is configured ({text})."
     elif "empty answer" in text:
         hint = "The model returned an empty answer."
     else:
@@ -322,11 +340,13 @@ def _call_groq_messages(
     timeout: float,
     max_attempts: int = 4,
     base_delay: float = 1.0,
+    provider: str = "groq",
 ) -> str:
+    """Name kept for history: it now serves every OpenAI-compatible provider."""
     return chat_completion(
         messages, model=model, api_key=api_key, max_tokens=max_tokens,
         temperature=temperature, top_p=top_p, timeout=timeout,
-        max_attempts=max_attempts, base_delay=base_delay,
+        max_attempts=max_attempts, base_delay=base_delay, provider=provider,
     )
 
 

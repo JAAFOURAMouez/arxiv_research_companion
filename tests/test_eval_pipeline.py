@@ -71,6 +71,20 @@ class TestGenerationChain(unittest.TestCase):
                                    "--embedder", "hash", "--sleep", "0", "--resume", "--out", str(self.answers)])
         self.assertEqual(self.answers.read_text(), before)
 
+    def test_resume_redoes_failed_answers(self):
+        recs = read_jsonl(self.answers)
+        recs[1].update(degraded=True, answer="failed", llm_error="HTTP 429")
+        write_jsonl(self.answers, recs)
+        with patch.dict(os.environ, {"GROQ_API_KEY": "x", "LLM_PROVIDER": "groq"}), \
+                patch.object(rag_engine, "_call_groq_messages", FakeLlm()):
+            generate_answers.main(["--questions", str(self.tmp / "q.csv"), "--ooc", str(self.tmp / "ooc.csv"),
+                                   "--snapshot", str(self.snap), "--embedder", "hash", "--sleep", "0",
+                                   "--resume", "--out", str(self.answers)])
+        fixed = {r["qid"]: r for r in read_jsonl(self.answers)}
+        self.assertEqual(len(fixed), 5)
+        self.assertFalse(fixed["q02"]["degraded"])
+        self.assertNotEqual(fixed["q02"]["answer"], "failed")
+
     def test_check_citations_without_judge(self):
         out = self.tmp / "cc.json"
         check_citations.main(["--answers", str(self.answers), "--snapshot", str(self.snap),
@@ -84,7 +98,8 @@ class TestGenerationChain(unittest.TestCase):
 
     def test_refusal_eval_counts_only_audited(self):
         out = self.tmp / "rf.json"
-        self.assertEqual(refusal_eval.main(["--answers", str(self.answers), "--out", str(out)]), 0)
+        self.assertEqual(refusal_eval.main(["--answers", str(self.answers), "--ooc", str(self.tmp / "ooc.csv"),
+                                                "--out", str(out)]), 0)
         res = read_json(out)
         self.assertEqual(res["ooc_refusal"]["n"], 1)
         self.assertEqual(res["ooc_refusal"]["k"], 1)

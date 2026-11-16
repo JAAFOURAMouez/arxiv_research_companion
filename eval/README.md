@@ -6,17 +6,18 @@ a measured result: `results/RESULTS.md` is generated from the JSON your runs pro
 
 ```bash
 uv sync --group eval         # ranx, sentence-transformers (torch), transformers, ragas ...
-export GROQ_API_KEY=...      # generation + LLM judge + RAGAS
-bash eval/run_all.sh         # or run the steps below one by one
+bash eval/run_all.sh         # LLM steps on a local Ollama (ollama pull llama3.2 qwen2.5:7b); no key needed
+# or on Groq:  LLM_PROVIDER=groq GROQ_API_KEY=... bash eval/run_all.sh
+# (run the steps below one by one if you prefer)
 ```
 
 ## 0. Inputs you provide
 | file | what |
 |---|---|
 | `eval/data/questions.csv` | 40 rows: `qid, question, relevant_arxiv_ids` (IDs separated by `;`). Label from arxiv.org **without running the app**. |
-| `eval/data/ooc_questions.csv` | 14 **draft** out-of-corpus questions (6 off-topic, 6 in-domain-but-absent, 2 false-premise). I only checked by keyword that the in-domain topics have no hit in the 300 stored abstracts. `validate_labels --ooc` prints the closest titles: read them, delete any question a stored paper could answer, then set `audited=true`. Unaudited rows are ignored by `refusal_eval`. |
+| `eval/data/ooc_questions.csv` | 14 **draft** out-of-corpus questions (6 off-topic, 6 in-domain-but-absent, 2 false-premise). I only checked by keyword that the in-domain topics have no hit in the 300 stored abstracts. `validate_labels --ooc` prints the closest titles: read them, delete any question a stored paper could answer, then set `audited=true`. Unaudited rows are ignored by `refusal_eval`, which reads the flag from this file (no need to regenerate answers after auditing). |
 | `eval/data/published_reference.json` | the published SciFact nDCG@10 for all-MiniLM-L6-v2, **left null on purpose**: copy it from MTEB/BEIR with the URL. |
-| `eval/data/calibration_to_label.csv` | produced by `make_calibration_set`; you fill the `label` column. |
+| `eval/data/calibration_to_label.csv` | produced by `make_calibration_set`; you fill the `label` column, either in a spreadsheet or in the terminal with `python -m eval.label_calibration` (one pair at a time, saved after each answer, resumable). |
 
 ## 1. Order of steps
 1. `python -m eval.validate_labels --questions eval/data/questions.csv --db arxiv_papers.db --check-arxiv --ooc eval/data/ooc_questions.csv`
@@ -45,3 +46,12 @@ bash eval/run_all.sh         # or run the steps below one by one
 
 ## 3. Smoke runs
 `--embedder hash`, `--reranker fake`, `--engine reference` exist so the pipeline can be exercised without models. Output from such runs is stamped `smoke: true` and printed with a banner; never quote it.
+
+
+## Which LLM produced the numbers
+Generation, the LLM support judge and RAGAS all follow `LLM_PROVIDER` / `JUDGE_PROVIDER` (see `.env.example`);
+`run_all.sh` defaults to Ollama: generator `llama3.2` (3B), judge `qwen2.5:7b`. Small local models follow the
+`[n]` citation format and the refusal instruction less reliably than a large hosted one, so citation, refusal
+and faithfulness figures will be lower than with Groq's gpt-oss-120b and must not be compared across providers.
+Retrieval metrics do not involve an LLM. `results/answers.meta.json` records provider and model.
+`generate_answers --resume` redoes answers that failed (rate limit, server down) instead of keeping them.

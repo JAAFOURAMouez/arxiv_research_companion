@@ -30,6 +30,12 @@ class TestParsing(unittest.TestCase):
         self.assertTrue(c.is_refusal('  "NOT_ENOUGH_INFORMATION".'))
         self.assertFalse(c.is_refusal("Diffusion models are good [1]."))
 
+    def test_refusal_tolerates_small_model_variants(self):
+        for text in ("NOT ENOUGH INFORMATION", "NOT-ENOUGH-INFORMATION.", "not_enough_information",
+                     "Answer: NOT ENOUGH INFORMATION"):
+            self.assertTrue(c.is_refusal(text), text)
+        self.assertFalse(c.is_refusal("There is not enough information about pruning in [1], but it helps."))
+
 
 class TestValidate(unittest.TestCase):
     def test_clean_answer(self):

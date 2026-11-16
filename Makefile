@@ -1,4 +1,4 @@
-.PHONY: lock sync test test-slow requirements
+.PHONY: lock sync test test-slow test-ollama requirements
 
 lock:            ## (re)generate uv.lock and the deploy requirements.txt from it
 	uv lock
@@ -12,6 +12,9 @@ sync:
 
 test:
 	uv run pytest -m "not slow and not network"
+
+test-ollama:     ## live tests against a local Ollama (ollama serve; ollama pull llama3.2)
+	uv run pytest -m ollama -v
 
 test-slow:
 	uv run pytest -m "slow or network"

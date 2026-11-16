@@ -23,12 +23,14 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Deque, Dict, List, Optional
 
+import requests
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from arxiv_research_companion import app_state, rag_engine
+from arxiv_research_companion.llm_http import PROVIDERS, ollama_base_url
 from arxiv_research_companion.data_ingestion import (
     get_last_update_timestamp,
     get_total_papers_count,
@@ -45,9 +47,65 @@ MAX_K = 10
 DEFAULT_MAX_NEW_TOKENS = 800
 
 
+HF_PROVIDER = "huggingface_api"
+HF_DEFAULT_MODEL = "Qwen/Qwen2.5-7B-Instruct"
+
+
+class LlmChoice(BaseModel):
+    """Which model answers: omitted = the server's default. The key is used for this request only."""
+
+    provider: str = Field(min_length=1, max_length=40)
+    model: str = Field(default="", max_length=120)
+    api_key: str = Field(default="", max_length=400, repr=False)
+
+
 class AskRequest(BaseModel):
     question: str = Field(min_length=1, max_length=MAX_QUESTION_CHARS)
     k: int = Field(default=DEFAULT_K, ge=1, le=MAX_K)
+    llm: Optional[LlmChoice] = None
+
+
+def _server_key(llm_cfg: Dict[str, Any], provider: str) -> str:
+    if provider == HF_PROVIDER:
+        return llm_cfg.get("api_token") or ""
+    return llm_cfg.get(f"{provider}_api_key") or ""
+
+
+def _default_model(llm_cfg: Dict[str, Any], provider: str) -> str:
+    if provider == llm_cfg["provider"]:
+        return llm_cfg["model_name"]
+    return HF_DEFAULT_MODEL if provider == HF_PROVIDER else PROVIDERS[provider].default_model
+
+
+def apply_llm_choice(llm_cfg: Dict[str, Any], choice: Optional[LlmChoice]) -> Dict[str, Any]:
+    """The ``llm`` config for one request, after the visitor's provider / model / key choice.
+
+    The server's own key is only spent on the server's own provider and model; any other
+    paid choice needs the visitor's key. Ollama (local, keyless) is open to any model.
+    """
+    out = dict(llm_cfg)
+    if choice is None:
+        return out
+    provider = choice.provider.strip().lower()
+    if provider != HF_PROVIDER and provider not in PROVIDERS:
+        raise HTTPException(status_code=422, detail=f"Unknown provider '{choice.provider}'.")
+    model = choice.model.strip() or _default_model(llm_cfg, provider)
+    user_key = choice.api_key.strip()
+    needs_key = provider == HF_PROVIDER or PROVIDERS[provider].needs_key
+
+    if needs_key and not user_key:
+        is_default = provider == llm_cfg["provider"] and model == llm_cfg["model_name"]
+        if not is_default:
+            raise HTTPException(
+                status_code=422,
+                detail="Enter your own API key to use this provider or model.",
+            )
+    out["provider"] = provider
+    out["model_name"] = model
+    if user_key:
+        out["api_key"] = user_key
+        out["api_token" if provider == HF_PROVIDER else f"{provider}_api_key"] = user_key
+    return out
 
 
 class RateLimiter:
@@ -166,7 +224,9 @@ def create_app() -> FastAPI:
         db_path = config["ingestion"]["db_path"]
         last = get_last_update_timestamp(db_path)
         llm = config["llm"]
-        has_key = bool(llm["groq_api_key"] if llm["provider"] == "groq" else llm["api_token"])
+        has_key = not PROVIDERS.get(llm["provider"], PROVIDERS["groq"]).needs_key or bool(
+            _server_key(llm, llm["provider"])
+        )
         rcfg = config["retrieval"]
         return {
             "ready": True,
@@ -174,9 +234,43 @@ def create_app() -> FastAPI:
             "papers": get_total_papers_count(db_path),
             "last_paper_date": _date_text(last),
             "model": llm["model_name"],
+            "provider": llm["provider"],
             "llm_configured": has_key,
             "retrieval_mode": rcfg.get("effective_mode", rcfg["mode"]),
         }
+
+    @app.get("/api/providers")
+    def providers() -> Dict[str, Any]:
+        """What the model picker offers; never returns a key, only whether the server has one."""
+        llm = (runtime.config or {}).get("llm") or {}
+        listing = [
+            {
+                "id": p.id, "label": p.label, "local": p.local, "needs_key": p.needs_key,
+                "default_model": _default_model(llm, p.id) if llm else p.default_model,
+                "server_key": bool(llm) and bool(_server_key(llm, p.id)),
+            }
+            for p in PROVIDERS.values()
+        ]
+        listing.append({
+            "id": HF_PROVIDER, "label": "Hugging Face", "local": False, "needs_key": True,
+            "default_model": _default_model(llm, HF_PROVIDER) if llm else HF_DEFAULT_MODEL,
+            "server_key": bool(llm) and bool(_server_key(llm, HF_PROVIDER)),
+        })
+        return {
+            "providers": listing,
+            "default": {"provider": llm.get("provider"), "model": llm.get("model_name")},
+        }
+
+    @app.get("/api/ollama/models")
+    def ollama_models() -> Dict[str, Any]:
+        base = ollama_base_url()
+        try:
+            resp = requests.get(f"{base}/api/tags", timeout=2.0)
+            resp.raise_for_status()
+            names = sorted(m.get("name", "") for m in resp.json().get("models", []) if m.get("name"))
+            return {"reachable": True, "models": names}
+        except (requests.RequestException, ValueError):
+            return {"reachable": False, "models": []}
 
     @app.post("/api/ask")
     def ask(body: AskRequest, request: Request) -> Dict[str, Any]:
@@ -189,7 +283,7 @@ def create_app() -> FastAPI:
             raise HTTPException(status_code=429, detail="Too many questions. Try again in a minute.")
 
         config = runtime.config
-        llm = dict(config["llm"])
+        llm = apply_llm_choice(config["llm"], body.llm)
         if not os.getenv("LLM_MAX_NEW_TOKENS"):
             llm["max_new_tokens"] = DEFAULT_MAX_NEW_TOKENS
         run_config = {**config, "llm": llm, "retrieval_k": body.k}

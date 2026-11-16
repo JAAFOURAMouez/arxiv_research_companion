@@ -44,6 +44,12 @@ def load_config(config_path: Optional[str] = None) -> Dict[str, Any]:
     if env_path.exists():
         load_dotenv(dotenv_path=env_path)
 
+    llm_provider = os.getenv("LLM_PROVIDER") or ("groq" if os.getenv("GROQ_API_KEY") else "huggingface_api")
+    # A model name only makes sense for one provider: default it per provider (LLM_MODEL_NAME wins).
+    default_models = {"ollama": "llama3.2", "openai": "gpt-4o-mini",
+                      "openrouter": "meta-llama/llama-3.3-70b-instruct"}
+    llm_model = os.getenv("LLM_MODEL_NAME") or default_models.get(llm_provider, "openai/gpt-oss-120b")
+
     # Build configuration dictionary with defaults
     config = {
         # arXiv API settings
@@ -91,12 +97,17 @@ def load_config(config_path: Optional[str] = None) -> Dict[str, Any]:
 
         # Language model settings
         "llm": {
+            # ollama | groq | openai | openrouter | huggingface_api.
             # "groq" is selected automatically when GROQ_API_KEY is set (unless LLM_PROVIDER is given)
-            "provider": os.getenv("LLM_PROVIDER") or ("groq" if os.getenv("GROQ_API_KEY") else "huggingface_api"),
-            "model_name": os.getenv("LLM_MODEL_NAME", "openai/gpt-oss-120b"),
+            "provider": llm_provider,
+            "model_name": llm_model,
             "inference_provider": os.getenv("HF_INFERENCE_PROVIDER") or None,
             "api_token": os.getenv("HF_API_TOKEN", ""),  # for Hugging Face Inference API
             "groq_api_key": os.getenv("GROQ_API_KEY", ""),
+            "openai_api_key": os.getenv("OPENAI_API_KEY", ""),
+            "openrouter_api_key": os.getenv("OPENROUTER_API_KEY", ""),
+            # Ollama needs no key; it is addressed by URL (default http://localhost:11434)
+            "ollama_base_url": os.getenv("OLLAMA_BASE_URL", "http://localhost:11434"),
             "timeout": float(os.getenv("LLM_TIMEOUT", "60.0")),
             "max_retries": int(os.getenv("LLM_MAX_RETRIES", "3")),  # on HTTP 429/5xx
             "retry_base_delay": float(os.getenv("LLM_RETRY_BASE_DELAY", "1.0")),
@@ -168,6 +179,8 @@ def _validate_config(config: Dict[str, Any]) -> None:
         raise ValueError("RETRIEVAL_DOC_TEXT must be abstract or title_abstract")
     if config["citations"]["policy"] not in ("drop", "flag"):
         raise ValueError("CITATIONS_POLICY must be drop or flag")
+    if config["llm"]["provider"] not in ("ollama", "groq", "openai", "openrouter", "huggingface_api"):
+        raise ValueError("LLM_PROVIDER must be ollama, groq, openai, openrouter or huggingface_api")
     if config["llm"]["max_retries"] < 0:
         raise ValueError("LLM max_retries must be non-negative")
 

@@ -106,8 +106,16 @@ def _split_line(line: str) -> List[str]:
     return [p.replace(_DOT, ".").strip() for p in parts if p.strip()]
 
 
+# Small models drift from the exact sentinel: "NOT ENOUGH INFORMATION", "NOT-ENOUGH-INFORMATION".
+# Any separator is accepted only in capitals; lower-case needs the underscores, so an ordinary
+# sentence like "there is not enough information about X [1]" is never read as a refusal.
+_REFUSAL_LOOSE = re.compile(r"NOT[_ \-]ENOUGH[_ \-]INFORMATION")
+_REFUSAL_UNDERSCORE = re.compile(r"not_enough_information", re.I)
+
+
 def is_refusal(text: str) -> bool:
-    return REFUSAL_SENTINEL in (text or "")[:160]
+    head = (text or "")[:160]
+    return bool(_REFUSAL_LOOSE.search(head) or _REFUSAL_UNDERSCORE.search(head))
 
 
 def _word_count(sentence: str) -> int:

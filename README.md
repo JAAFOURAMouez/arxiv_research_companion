@@ -8,7 +8,7 @@ An AI-powered research assistant that helps users quickly find and synthesize in
 - Creates semantic embeddings with all-MiniLM-L6-v2 (ONNX, no PyTorch)
 - Stores embeddings in a vector database (ChromaDB)
 - Retrieves relevant paper abstracts for user queries
-- Generates grounded answers with an LLM on Groq (Hugging Face Inference API also supported)
+- Generates grounded answers with an LLM of your choice: local Ollama (no key), Groq, OpenAI, OpenRouter or Hugging Face. The page has a **Model** section to pick provider and model, and to paste your own API key (sent with the question, never stored on the server)
 - Provides citations to source papers
 - Incremental updates: only processes new papers since last run
 - Web interface: a plain HTML/CSS/JS page over a small FastAPI API
@@ -93,7 +93,7 @@ arxiv_research_companion/
 │   ├── server.py                      # FastAPI: JSON API + static front-end
 │   ├── app_state.py                   # builds config, index and retriever (also the build step)
 │   ├── citations.py                   # [n] citation validation and repair
-│   ├── llm_http.py                    # Groq HTTP client with retries
+│   ├── llm_http.py                    # OpenAI-compatible client (Ollama/Groq/OpenAI/OpenRouter) with retries
 │   ├── interface.py, main.py          # legacy Gradio interface
 │   ├── config.py                      # Configuration management
 │   └── utils.py                       # Helper functions
@@ -169,3 +169,24 @@ uv run uvicorn arxiv_research_companion.server:app --reload
 * Answers must cite retrieved papers as `[n]`; uncited sentences are repaired once, then removed.
 * `RETRIEVAL_MODE` = `dense` (default, unchanged behaviour) | `bm25` | `hybrid` | `hybrid_rerank`.
   Choose it from the numbers produced by the evaluation scripts, see [`eval/README.md`](eval/README.md).
+
+
+## Models: local Ollama or your own API key
+
+Pick the provider and model in the **Model** section of the page, or set a default with
+`LLM_PROVIDER` / `LLM_MODEL_NAME` (see `.env.example`).
+
+* **Ollama (local, free):** `ollama serve`, `ollama pull llama3.2`, then choose *Ollama*. The app
+  must run where Ollama is reachable (`OLLAMA_BASE_URL`, default `http://localhost:11434`), so a
+  hosted deployment on Render cannot reach the Ollama on your laptop.
+* **Your own key:** choose Groq / OpenAI / OpenRouter / Hugging Face and paste a key. It is used for
+  that question only and kept in your browser tab, never on the server. The server's own key is only
+  used for the server's default model.
+
+### Tests and evaluation with Ollama
+
+* `uv run pytest` fakes the HTTP call (Ollama is the default provider in `tests/test_server.py`).
+* `make test-ollama` (`pytest -m ollama`) runs live tests against a real Ollama; they skip when no
+  server or model is found. `OLLAMA_TEST_MODEL` picks the model.
+* `eval/`: `LLM_PROVIDER=ollama LLM_MODEL_NAME=llama3.2 python -m eval.generate_answers ...` and
+  `JUDGE_PROVIDER=ollama` (default judge `qwen2.5:7b`, `JUDGE_MODEL` to change) need no API key.

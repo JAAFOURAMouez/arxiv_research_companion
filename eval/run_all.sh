@@ -7,6 +7,23 @@ OOC=eval/data/ooc_questions.csv
 SNAP=eval/data/corpus_snapshot.jsonl
 RUN="uv run --group eval python -m"
 
+# LLM steps (generation, citation judge, RAGAS) run on a local Ollama unless you say otherwise:
+#   LLM_PROVIDER=groq GROQ_API_KEY=... bash eval/run_all.sh
+# Generator llama3.2 and judge qwen2.5:7b are different families on purpose (a judge from the
+# generator's own family flatters it).  Override with LLM_MODEL_NAME / JUDGE_MODEL.
+export LLM_PROVIDER="${LLM_PROVIDER:-ollama}"
+if [ "$LLM_PROVIDER" = "ollama" ]; then
+  export LLM_MODEL_NAME="${LLM_MODEL_NAME:-llama3.2}"
+  export JUDGE_PROVIDER="${JUDGE_PROVIDER:-ollama}"
+  export JUDGE_MODEL="${JUDGE_MODEL:-qwen2.5:7b}"
+  BASE="${OLLAMA_BASE_URL:-http://localhost:11434}"
+  TAGS=$(curl -sf --max-time 3 "$BASE/api/tags") || { echo "ERROR: Ollama not reachable at $BASE (run: ollama serve)"; exit 1; }
+  for m in "$LLM_MODEL_NAME" "$JUDGE_MODEL"; do
+    case "$TAGS" in *"\"$m"*) ;; *) echo "ERROR: model '$m' not pulled (run: ollama pull $m)"; exit 1;; esac
+  done
+  echo ">>> LLM: ollama / generator=$LLM_MODEL_NAME judge=$JUDGE_MODEL"
+fi
+
 $RUN eval.validate_labels --questions $Q --db arxiv_papers.db --check-arxiv --ooc $OOC
 echo ">>> Audit the OOC titles printed above, set audited=true in $OOC, then continue (Ctrl-C to stop)."; read -r _
 

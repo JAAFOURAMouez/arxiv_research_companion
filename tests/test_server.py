@@ -2,7 +2,7 @@
 End-to-end tests of the web server (FastAPI TestClient, in-process).
 
 No network and no model download: the ONNX embedder is replaced by a deterministic hash
-embedder and the Groq HTTP call by a scripted fake.
+embedder and the LLM HTTP call (Ollama by default) by a scripted fake.
 """
 from datetime import datetime, timezone
 
@@ -47,7 +47,7 @@ class Resp:
         return {"choices": [{"message": {"content": self._content}}]}
 
 
-class FakeGroq:
+class FakeLlm:
     def __init__(self, *responses):
         self.responses = list(responses)
         self.calls = 0
@@ -73,7 +73,7 @@ def env(tmp_path, monkeypatch):
     monkeypatch.setattr(ef, "ONNXMiniLM_L6_V2", FakeOnnx)
     for key, value in {
         "INGESTION_DB_PATH": str(db), "ARC_CHROMA_DIR": str(tmp_path / "chroma"),
-        "GROQ_API_KEY": "test-key", "LLM_PROVIDER": "groq", "LLM_MAX_RETRIES": "2",
+        "LLM_PROVIDER": "ollama", "LLM_MODEL_NAME": "llama3.2", "LLM_MAX_RETRIES": "2",
         "LLM_RETRY_BASE_DELAY": "0", "CITATIONS_ENFORCE": "true", "RETRIEVAL_MODE": "dense",
         "RATE_LIMIT_PER_MINUTE": "100",
     }.items():
@@ -131,7 +131,7 @@ def test_not_ready_is_reported_and_refuses_questions(env):
 
 
 def test_answer_with_citations_and_sources(env, client):
-    env.setattr(llm_http.requests, "post", FakeGroq(Resp(content="Sparse attention lowers memory cost for long inputs [1].")))
+    env.setattr(llm_http.requests, "post", FakeLlm(Resp(content="Sparse attention lowers memory cost for long inputs [1].")))
     data = ask(client).json()
     assert "lowers memory cost" in data["answer"]
     assert not data["degraded"] and not data["refused"]
@@ -144,14 +144,14 @@ def test_answer_with_citations_and_sources(env, client):
 
 
 def test_k_controls_the_number_of_sources(env, client):
-    env.setattr(llm_http.requests, "post", FakeGroq(Resp(content="Sparse attention lowers memory cost for long inputs [1].")))
+    env.setattr(llm_http.requests, "post", FakeLlm(Resp(content="Sparse attention lowers memory cost for long inputs [1].")))
     assert len(ask(client, k=2).json()["sources"]) == 2
     assert ask(client, k=0).status_code == 422
     assert ask(client, k=11).status_code == 422
 
 
 def test_llm_5xx_still_shows_sources(env, client):
-    fake = FakeGroq(Resp(503))
+    fake = FakeLlm(Resp(503))
     env.setattr(llm_http.requests, "post", fake)
     data = ask(client).json()
     assert fake.calls == 3  # 1 try + 2 retries (LLM_MAX_RETRIES=2)
@@ -162,7 +162,7 @@ def test_llm_5xx_still_shows_sources(env, client):
 
 
 def test_429_then_success_is_retried_transparently(env, client):
-    fake = FakeGroq(Resp(429), Resp(content="Diffusion models denoise images step by step [1]."))
+    fake = FakeLlm(Resp(429), Resp(content="Diffusion models denoise images step by step [1]."))
     env.setattr(llm_http.requests, "post", fake)
     data = ask(client, "How do diffusion models generate images?").json()
     assert fake.calls == 2
@@ -171,7 +171,7 @@ def test_429_then_success_is_retried_transparently(env, client):
 
 
 def test_refusal_is_shown_with_closest_sources(env, client):
-    env.setattr(llm_http.requests, "post", FakeGroq(Resp(content="NOT_ENOUGH_INFORMATION")))
+    env.setattr(llm_http.requests, "post", FakeLlm(Resp(content="NOT_ENOUGH_INFORMATION")))
     data = ask(client, "What is the capital of France?").json()
     assert data["refused"] is True
     assert "don't contain enough information" in data["answer"]
@@ -180,7 +180,7 @@ def test_refusal_is_shown_with_closest_sources(env, client):
 
 def test_uncited_sentences_are_removed_and_reported(env, client):
     answer = "Sparse attention lowers memory cost [1]. This extra claim carries no citation at all."
-    env.setattr(llm_http.requests, "post", FakeGroq(Resp(content=answer)))
+    env.setattr(llm_http.requests, "post", FakeLlm(Resp(content=answer)))
     data = ask(client).json()
     assert "extra claim" not in data["answer"]
     assert data["dropped_count"] == 1
@@ -205,7 +205,7 @@ def test_bad_questions_are_rejected(client):
 
 def test_rate_limit_per_client(env):
     env.setenv("RATE_LIMIT_PER_MINUTE", "2")
-    env.setattr(llm_http.requests, "post", FakeGroq(Resp(content="Sparse attention lowers memory cost for long inputs [1].")))
+    env.setattr(llm_http.requests, "post", FakeLlm(Resp(content="Sparse attention lowers memory cost for long inputs [1].")))
     c = boot()
     try:
         codes = [ask(c).status_code for _ in range(3)]
@@ -214,3 +214,114 @@ def test_rate_limit_per_client(env):
         assert other.status_code == 200
     finally:
         c.__exit__(None, None, None)
+
+
+# --------------------------------------------------------------------------- #
+# Provider / model picker                                                     #
+# --------------------------------------------------------------------------- #
+class Capture(FakeLlm):
+    """FakeLlm that also remembers the URL, headers and payload of each call."""
+
+    def __call__(self, url, headers=None, json=None, timeout=None):
+        self.last = {"url": url, "headers": headers, "json": json}
+        return super().__call__(url, headers=headers, json=json, timeout=timeout)
+
+
+GOOD = "Sparse attention lowers memory cost for long inputs [1]."
+
+
+def test_default_provider_is_ollama_without_key(env, client):
+    cap = Capture(Resp(content=GOOD))
+    env.setattr(llm_http.requests, "post", cap)
+    data = ask(client).json()
+    assert not data["degraded"]
+    assert cap.last["url"] == "http://localhost:11434/v1/chat/completions"
+    assert "Authorization" not in cap.last["headers"]
+    assert cap.last["json"]["model"] == "llama3.2"
+    assert "max_tokens" in cap.last["json"]
+
+
+def test_status_reports_provider(client):
+    status = client.get("/api/status").json()
+    assert status["provider"] == "ollama" and status["llm_configured"] is True
+
+
+def test_providers_lists_choices_without_leaking_keys(env, client):
+    env.setenv("GROQ_API_KEY", "server-secret")
+    data = client.get("/api/providers").json()
+    ids = [p["id"] for p in data["providers"]]
+    assert {"ollama", "groq", "openai", "openrouter", "huggingface_api"} <= set(ids)
+    assert data["default"] == {"provider": "ollama", "model": "llama3.2"}
+    assert "server-secret" not in str(data)
+    ollama = next(p for p in data["providers"] if p["id"] == "ollama")
+    assert ollama["needs_key"] is False and ollama["local"] is True
+
+
+def test_user_key_and_model_reach_the_chosen_provider(env, client):
+    cap = Capture(Resp(content=GOOD))
+    env.setattr(llm_http.requests, "post", cap)
+    choice = {"provider": "openai", "model": "gpt-4o-mini", "api_key": "sk-user"}
+    data = ask(client, llm=choice).json()
+    assert not data["degraded"]
+    assert cap.last["url"] == "https://api.openai.com/v1/chat/completions"
+    assert cap.last["headers"]["Authorization"] == "Bearer sk-user"
+    assert cap.last["json"]["model"] == "gpt-4o-mini"
+
+
+def test_paid_provider_without_a_key_is_refused(env, client):
+    cap = Capture(Resp(content=GOOD))
+    env.setattr(llm_http.requests, "post", cap)
+    r = ask(client, llm={"provider": "groq", "model": "llama-3.3-70b-versatile"})
+    assert r.status_code == 422 and "API key" in r.json()["detail"]
+    assert cap.calls == 0
+
+
+def test_unknown_provider_is_refused(client):
+    assert ask(client, llm={"provider": "nope", "model": "x"}).status_code == 422
+
+
+def test_server_key_is_not_spent_on_other_models(env):
+    env.setenv("LLM_PROVIDER", "groq")
+    env.setenv("GROQ_API_KEY", "server-secret")
+    env.setenv("LLM_MODEL_NAME", "openai/gpt-oss-120b")
+    c = boot()
+    try:
+        cap = Capture(Resp(content=GOOD))
+        env.setattr(llm_http.requests, "post", cap)
+        # the server's own provider + model: allowed without a key from the visitor
+        ok = ask(c, llm={"provider": "groq", "model": "openai/gpt-oss-120b"})
+        assert ok.status_code == 200 and cap.last["headers"]["Authorization"] == "Bearer server-secret"
+        # another model on the owner's key: refused
+        assert ask(c, llm={"provider": "groq", "model": "llama-3.3-70b-versatile"}).status_code == 422
+        # the same with the visitor's own key: fine
+        own = ask(c, llm={"provider": "groq", "model": "llama-3.3-70b-versatile", "api_key": "gsk-own"})
+        assert own.status_code == 200 and cap.last["headers"]["Authorization"] == "Bearer gsk-own"
+    finally:
+        c.__exit__(None, None, None)
+
+
+def test_ollama_unreachable_gives_a_helpful_message(env, client):
+    def refuse(*a, **k):
+        raise llm_http.requests.ConnectionError("refused")
+
+    env.setattr(llm_http.requests, "post", refuse)
+    env.setenv("LLM_RETRY_BASE_DELAY", "0")
+    env.setattr(llm_http.time, "sleep", lambda s: None)
+    data = ask(client).json()
+    assert data["degraded"] and "ollama serve" in data["answer"]
+
+
+def test_ollama_models_endpoint(env, client):
+    class R:
+        def raise_for_status(self): pass
+        def json(self): return {"models": [{"name": "qwen2.5:7b"}, {"name": "llama3.2:latest"}]}
+
+    env.setattr(server.requests, "get", lambda url, timeout=None: R())
+    assert client.get("/api/ollama/models").json() == {
+        "reachable": True, "models": ["llama3.2:latest", "qwen2.5:7b"]}
+
+    def down(url, timeout=None):
+        raise server.requests.ConnectionError("down")
+
+    env.setattr(server.requests, "get", down)
+    assert client.get("/api/ollama/models").json() == {"reachable": False, "models": []}

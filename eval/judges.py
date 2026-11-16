@@ -22,6 +22,28 @@ from arxiv_research_companion.citations import split_sentences, strip_citation_m
 
 DEFAULT_NLI = "cross-encoder/nli-deberta-v3-base"
 DEFAULT_JUDGE_MODEL = "llama-3.3-70b-versatile"  # unverified default: check it still exists on Groq
+# Judge defaults per provider. Ollama: a Qwen model, a different family from the default
+# llama3.2 generator.
+JUDGE_MODELS = {"groq": DEFAULT_JUDGE_MODEL, "ollama": "qwen2.5:7b", "openai": "gpt-4o-mini",
+                "openrouter": "meta-llama/llama-3.3-70b-instruct"}
+
+
+def judge_provider() -> str:
+    """JUDGE_PROVIDER, else LLM_PROVIDER, else groq (the historical default)."""
+    provider = (os.getenv("JUDGE_PROVIDER") or os.getenv("LLM_PROVIDER") or "groq").lower()
+    return provider if provider in JUDGE_MODELS else "groq"
+
+
+def default_judge_model(provider: Optional[str] = None) -> str:
+    return os.getenv("JUDGE_MODEL") or JUDGE_MODELS[provider or judge_provider()]
+
+
+def judge_api_key(provider: Optional[str] = None) -> Optional[str]:
+    """Key from the provider's env var; Ollama needs none (a placeholder keeps clients happy)."""
+    from arxiv_research_companion.llm_http import PROVIDERS
+
+    spec = PROVIDERS[provider or judge_provider()]
+    return os.getenv(spec.key_env) if spec.needs_key else "ollama"
 
 
 def premise_windows(abstract: str, size: int = 3) -> List[str]:
@@ -85,12 +107,17 @@ class LlmJudge:
     name = "llm"
     SCORES = {"supported": 1.0, "partial": 0.5, "unsupported": 0.0}
 
-    def __init__(self, model: Optional[str] = None, api_key: Optional[str] = None, sleep_s: float = 1.0):
-        self.model_name = model or os.getenv("JUDGE_MODEL") or DEFAULT_JUDGE_MODEL
-        self.api_key = api_key or os.getenv("GROQ_API_KEY")
-        self.sleep_s = sleep_s
+    def __init__(self, model: Optional[str] = None, api_key: Optional[str] = None,
+                 sleep_s: Optional[float] = None, provider: Optional[str] = None):
+        self.provider = provider or judge_provider()
+        self.model_name = model or default_judge_model(self.provider)
+        self.api_key = api_key or judge_api_key(self.provider)
+        # no rate limit to respect locally
+        self.sleep_s = sleep_s if sleep_s is not None else (0.0 if self.provider == "ollama" else 1.0)
         if not self.api_key:
-            raise RuntimeError("GROQ_API_KEY is required for the LLM judge")
+            from arxiv_research_companion.llm_http import PROVIDERS
+
+            raise RuntimeError(f"{PROVIDERS[self.provider].key_env} is required for the LLM judge")
 
     def score(self, abstract: str, sentence: str) -> Dict:
         from arxiv_research_companion.llm_http import chat_completion
@@ -98,7 +125,9 @@ class LlmJudge:
         prompt = JUDGE_PROMPT.format(abstract=abstract.strip(), claim=strip_citation_markers(sentence))
         time.sleep(self.sleep_s)
         raw = chat_completion([{"role": "user", "content": prompt}], model=self.model_name,
-                              api_key=self.api_key, max_tokens=60, temperature=0.0, timeout=60.0) or ""
+                              api_key=self.api_key, max_tokens=60, temperature=0.0,
+                              timeout=180.0 if self.provider == "ollama" else 60.0,
+                              provider=self.provider) or ""
         m = _VERDICT.search(raw)
         verdict = m.group(1).lower() if m else "unparsed"
         return {"verdict": verdict, "score": self.SCORES.get(verdict, float("nan")), "raw": raw[:200]}

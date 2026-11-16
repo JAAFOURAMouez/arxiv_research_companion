@@ -124,6 +124,99 @@ class TestCalibrationMath(unittest.TestCase):
         self.assertEqual((r["tp"], r["fp"], r["fn"], r["tn"]), (1, 1, 1, 1))
 
 
+class TestJudgeProviders(unittest.TestCase):
+    def test_ollama_judge_needs_no_key_and_does_not_sleep(self):
+        from unittest.mock import patch
+
+        from eval.judges import LlmJudge
+
+        with patch.dict("os.environ", {"JUDGE_PROVIDER": "ollama"}, clear=True):
+            judge = LlmJudge()
+        self.assertEqual((judge.provider, judge.model_name, judge.sleep_s), ("ollama", "qwen2.5:7b", 0.0))
+
+        seen = {}
+
+        def fake_chat(messages, **kw):
+            seen.update(kw)
+            return "verdict: supported"
+
+        with patch("arxiv_research_companion.llm_http.chat_completion", fake_chat):
+            out = judge.score("An abstract.", "A claim [1].")
+        self.assertEqual(out["verdict"], "supported")
+        self.assertEqual(seen["provider"], "ollama")
+
+    def test_groq_judge_still_requires_its_key(self):
+        from unittest.mock import patch
+
+        from eval.judges import LlmJudge
+
+        with patch.dict("os.environ", {}, clear=True):
+            with self.assertRaises(RuntimeError) as ctx:
+                LlmJudge()
+        self.assertIn("GROQ_API_KEY", str(ctx.exception))
+
+    def test_judge_follows_llm_provider(self):
+        from unittest.mock import patch
+
+        from eval.judges import judge_provider
+
+        with patch.dict("os.environ", {"LLM_PROVIDER": "ollama"}, clear=True):
+            self.assertEqual(judge_provider(), "ollama")
+        with patch.dict("os.environ", {"LLM_PROVIDER": "huggingface_api"}, clear=True):
+            self.assertEqual(judge_provider(), "groq")
+
+
+class TestRefusalAudit(unittest.TestCase):
+    def test_audit_flag_is_read_from_the_csv_not_the_stale_answers(self):
+        import json
+        import tempfile
+        from pathlib import Path
+
+        from eval import refusal_eval
+
+        with tempfile.TemporaryDirectory() as d:
+            d = Path(d)
+            rec = lambda qid, kind, refused: {  # noqa: E731
+                "qid": qid, "kind": kind, "refused": refused, "degraded": False,
+                "top1_dense_cosine": 0.2 if kind == "ooc" else 0.7, "audited": ""}
+            (d / "a.jsonl").write_text("\n".join(json.dumps(r) for r in [
+                rec("q1", "in_scope", False), rec("q2", "in_scope", False),
+                rec("o1", "ooc", True), rec("o2", "ooc", False)]))
+            (d / "ooc.csv").write_text("qid,question,audited\no1,Capital?,true\no2,Recipe?,\n")
+            out = d / "r.json"
+            code = refusal_eval.main(["--answers", str(d / "a.jsonl"), "--ooc", str(d / "ooc.csv"),
+                                      "--out", str(out)])
+            self.assertEqual(code, 0)
+            result = json.loads(out.read_text())
+            self.assertEqual(result["ooc_refusal"]["n"], 1)         # only o1 is audited now
+            self.assertEqual(result["n_ooc_unaudited_excluded"], 1)
+
+
+class TestLabelTool(unittest.TestCase):
+    def test_labels_are_saved_after_each_answer_and_resumable(self):
+        import csv
+        import tempfile
+        from pathlib import Path
+
+        from eval import label_calibration as lc
+
+        with tempfile.TemporaryDirectory() as d:
+            path = str(Path(d) / "cal.csv")
+            with open(path, "w", newline="") as fh:
+                w = csv.writer(fh)
+                w.writerow(["pair_id", "sentence", "cited_id", "title", "abstract", "label"])
+                for n in range(3):
+                    w.writerow([f"c{n}", "A claim.", "2610.0000" + str(n), "T", "An abstract.", ""])
+            answers = iter(["s", "x", "p", "q"])           # c0=supported, junk ignored, c1=partial, quit
+            self.assertEqual(lc.run(path, False, ask=lambda _: next(answers)), 0)
+            rows = list(csv.DictReader(open(path, newline="")))
+            self.assertEqual([r["label"] for r in rows], ["supported", "partial", ""])
+            answers = iter(["b", "u"])                     # resume: starts at c2; back is a no-op there
+            lc.run(path, False, ask=lambda _: next(answers))
+            rows = list(csv.DictReader(open(path, newline="")))
+            self.assertEqual([r["label"] for r in rows], ["supported", "partial", "unsupported"])
+
+
 class TestHelpers(unittest.TestCase):
     def test_normalize_ids(self):
         for raw in ["arXiv:2610.02207v2", "https://arxiv.org/abs/2610.02207v3", " 2610.02207 ", "https://arxiv.org/pdf/2610.02207.pdf"]:
