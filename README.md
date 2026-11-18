@@ -1,30 +1,26 @@
 # arXiv Research Companion
 
-An AI-powered research assistant that helps users quickly find and synthesize insights from academic papers using Retrieval-Augmented Generation (RAG) over arXiv.org.
+A research assistant that answers questions about recent arXiv papers (cs.AI, cs.LG, stat.ML...) with
+Retrieval-Augmented Generation: it retrieves the most relevant abstracts, has an LLM write an answer
+in which **every sentence cites the paper it comes from as `[n]`**, and refuses when the papers do not
+contain the answer. The retrieval and the generation are both **measured** (see [Evaluation results](#evaluation-results)).
 
 ## Features
 
-- Fetches papers from arXiv API (categories: cs.AI, cs.LG, stat.ML, etc.)
-- Creates semantic embeddings with all-MiniLM-L6-v2 (ONNX, no PyTorch)
-- Stores embeddings in a vector database (ChromaDB)
-- Retrieves relevant paper abstracts for user queries
-- Generates grounded answers with an LLM of your choice: local Ollama (no key), Groq, OpenAI, OpenRouter or Hugging Face. The page has a **Model** section to pick provider and model, and to paste your own API key (sent with the question, never stored on the server)
-- Every answer sentence cites the retrieved paper it comes from as `[n]`; uncited sentences are repaired once, then removed
-- Retrieval modes: dense, BM25, hybrid, hybrid + cross-encoder rerank (chosen from the evaluation in `eval/`)
-- Incremental updates: only processes new papers since last run
-- Web interface: a plain HTML/CSS/JS page over a small FastAPI API
-- Designed to run on CPU-only environments (WSL2/Linux compatible)
-- Uses only free APIs and open-source tools
+- Fetches papers from the arXiv API and keeps them in SQLite; incremental updates (only new papers) run nightly in CI
+- Embeds abstracts with all-MiniLM-L6-v2 through ONNX Runtime (no PyTorch in production) and stores them in ChromaDB
+- Four retrieval modes: dense, BM25, hybrid (reciprocal rank fusion) and hybrid + cross-encoder rerank; `dense` is the default, chosen by a rule declared before the measurement
+- Answers with the LLM of your choice: local Ollama (no key), Groq, OpenAI, OpenRouter or Hugging Face. The page has a **Model** section to pick provider and model and to paste your own API key (sent with the question only, never stored on the server)
+- Citation contract: sentences without a valid `[n]` are repaired once, then removed; if the papers do not answer the question the model must reply `NOT_ENOUGH_INFORMATION`, shown as a clean refusal
+- Plain HTML/CSS/JS page served by a small FastAPI app; runs on CPU only; uses free APIs and open-source tools
 
 ## Architecture
 
-The system follows a clean, layered architecture:
-
-1. **Data Ingestion Layer**: Fetches and parses arXiv papers, handles deduplication
-2. **Embedding & Vector Storage Layer**: Generates embeddings and manages similarity search
-3. **RAG Engine Layer**: Retrieves relevant context and generates answers with LLMs
-4. **Presentation Layer**: FastAPI server and the static page in `web/`
-5. **Configuration & Utilities**: Centralized config, logging, and helper functions
+1. **Data ingestion**: arXiv API, deduplication, SQLite (`arxiv_papers.db`)
+2. **Embedding and vector storage**: ONNX MiniLM embeddings, ChromaDB similarity search
+3. **RAG engine**: retrieval, prompt, LLM call with retries, citation enforcement, refusal detection
+4. **Presentation**: FastAPI server and the static page in `web/`
+5. **Configuration**: environment variables and defaults in `config.py`
 
 ## Getting Started
 
@@ -149,6 +145,122 @@ See `requirements.txt` for the full list. Key packages include:
 - `pydantic`
 
 Evaluation-only packages (`ranx`, `sentence-transformers`, `ragas`, ...) live in the `eval` group and are never installed on the deployed app. `gradio` is a dev dependency for the legacy interface tests.
+
+## Evaluation results
+
+Everything below is produced by `bash eval/run_all.sh` and `python -m eval.report` (full tables in
+`results/RESULTS.md`, regenerated on every run and not tracked by git). Setup of the run reported
+here: 300 abstracts (snapshot sha256 `002d5a0f...`), 40 hand-labelled questions (116 relevant papers),
+14 out-of-corpus questions, generator `llama3.2` (3B) on Ollama, judge `qwen2.5:7b` (a different
+family on purpose), retrieval `dense`, top-3 papers per question, temperature 0.7. All intervals
+are 95 %. **One run is one sample**: the generator is stochastic, so generation figures move a little
+from run to run.
+
+### 1. Retrieval (no LLM involved)
+
+| config | recall@3 | recall@10 | MRR@10 | nDCG@10 [95 % CI] |
+|---|---|---|---|---|
+| dense (MiniLM) | 0.388 | 0.600 | 0.617 | 0.516 [0.42, 0.61] |
+| BM25 | 0.400 | 0.550 | 0.609 | 0.490 [0.39, 0.59] |
+| hybrid (RRF) | 0.467 | 0.621 | 0.718 | **0.580** [0.48, 0.68] |
+| hybrid + rerank | 0.383 | 0.633 | 0.655 | 0.542 [0.45, 0.63] |
+| random (expected) | 0.011 | 0.035 | 0.029 | 0.022 |
+
+* Every configuration is far above random. Hybrid has the best mean nDCG@10, but a paired bootstrap
+  (Bonferroni-adjusted) shows it is **not significantly better** than dense (+0.064, CI [-0.018, +0.146])
+  or hybrid + rerank. Only BM25 is significantly worse (+0.090, CI [+0.029, +0.152]).
+* The pre-declared rule "take the cheapest configuration indistinguishable from the best" therefore
+  selects **dense**, which is the default. The cross-encoder doubles the latency (p50 223 ms against
+  110 ms) without a measurable gain.
+* hit@k (a relevant paper among the top k) for dense: 0.47 / 0.70 / 0.80 / 0.88 at k = 1 / 3 / 5 / 10.
+  The 3 papers given to the LLM contain a relevant one for 70 % of the questions.
+* Questions where dense finds nothing in its top 10: q03, q05, q09, q15, q30 (5 of 40).
+
+### 2. Cross-check on BEIR SciFact (5,183 docs, 300 queries, full test split)
+
+| config | nDCG@10 [95 % CI] |
+|---|---|
+| dense | 0.645 [0.599, 0.689] |
+| BM25 | 0.686 [0.642, 0.730] |
+| hybrid | **0.717** [0.674, 0.758] |
+| hybrid + rerank | 0.704 [0.660, 0.747] |
+
+SciFact is claim verification over biomedical abstracts, not question answering over arXiv: it checks
+that the embedding pipeline is sound, not the quality of this product's retrieval. The published
+reference value for the model was not entered in `published_reference.json`, so no comparison with
+the literature is claimed.
+
+### 3. ONNX embeddings against sentence-transformers
+
+On the 300 abstracts and the 40 questions the minimum cosine similarity between the two
+implementations is 1.00000, the same top-1 neighbour is returned for 100 % of the questions and the
+mean top-10 overlap is 1.000. The 0.99 threshold passes, so the PyTorch-free production embedder is
+equivalent to the reference one. The SciFact nDCG@10 is identical (0.6451).
+
+### 4. Generation (llama3.2, top-3 papers)
+
+**Citations** (37 answered questions):
+
+| measure | result |
+|---|---|
+| raw output already compliant (every factual sentence has a valid `[n]`) | 0.757 [0.599, 0.866] |
+| factual sentences with a valid citation after enforcement | 1.000 [0.940, 1.000] (n = 60) |
+| cited IDs that belong to the retrieved set | 1.000 [0.958, 1.000] (n = 87) |
+| cited IDs that resolve on arXiv | 69 of 69 |
+
+About a quarter of the raw answers contain uncited sentences (the only violation type observed), which
+is why the repair-then-drop step exists. After it, no answer cites a paper that was not retrieved.
+
+**Refusal** (`NOT_ENOUGH_INFORMATION`):
+
+| measure | result |
+|---|---|
+| out-of-corpus questions refused | 14 of 14, 1.000 [0.785, 1.000] |
+| in-scope questions refused by mistake | 3 of 40 = 0.075 [0.026, 0.199] (q01, q07, q13) |
+| top-1 cosine AUROC, in-scope against out-of-corpus | 0.977 |
+
+The top-1 cosine of in-scope questions ranges 0.37-0.66 (median 0.52) and that of out-of-corpus
+questions 0.10-0.44 (median 0.26): a retrieval-score gate would separate them well (listed below as
+a possible improvement). With 14 questions the lower bound of the refusal interval is wide.
+
+**Is each sentence supported by its cited abstract?** Two judges, both scored against 30 sentence/abstract
+pairs labelled by hand (12 supported, 12 partial, 6 unsupported; 24 real pairs and 6 deliberately
+swapped ones):
+
+| judge | accuracy | precision | recall | kappa |
+|---|---|---|---|---|
+| NLI cross-encoder `nli-deberta-v3-base` (threshold 0.20, leave-one-out) | 0.800 [0.627, 0.905] | 0.800 | 0.667 | 0.571 (AUC 0.824) |
+| LLM judge `qwen2.5:7b` | 0.800 [0.627, 0.905] | 0.667 | 1.000 | 0.615 (3-class 0.570) |
+
+Applied to the generated answers (calibrated judges):
+
+| measure | NLI | LLM judge |
+|---|---|---|
+| (sentence, cited paper) pairs supported (n = 87) | 0.299 [0.213, 0.402] | 0.506 [0.403, 0.608] |
+| sentences supported by at least one cited paper (n = 61) | 0.426 [0.310, 0.551] | 0.705 [0.581, 0.804] |
+
+RAGAS faithfulness (judge `qwen2.5:7b`): **0.794** [0.684, 0.892] over 37 answers, no NaN.
+
+Read these three numbers as a range, not as a fact: the NLI judge is strict (it recovers 67 % of
+supported pairs), the LLM judge is generous (it accepts every supported pair but also 5 of the 12
+"partial" and 1 of the 6 "unsupported" ones), and RAGAS uses the same LLM judge with its own prompt.
+The truth is probably between 0.43 and 0.79.
+
+### 5. Limits
+
+* One labeller, no inter-annotator agreement; relevance was judged from arXiv.org, not pooled from
+  system outputs, so relevant papers nobody labelled count as misses.
+* 40 questions, 14 out-of-corpus questions and 30 calibration pairs: intervals are wide and most
+  differences between configurations are not significant.
+* The corpus is 300 recent abstracts, so recall@10 is easy; compare with the random row.
+* Grounding is checked against the **abstract** only: a sentence true of the full paper but absent
+  from the abstract counts as unsupported, and the "any cited paper supports it" rule under-counts
+  claims that combine several papers.
+* A 3B local model is a hard setting: it cites and refuses less reliably than a large hosted model, so
+  generation figures are not comparable across providers. Retrieval figures are.
+* The judges are imperfect proxies for a human reading, and the cited-sentence validator checks that a
+  valid `[n]` is present, not that the sentence is meaningful.
+* The nightly ingestion changes the live corpus; these numbers describe the frozen snapshot.
 
 ## Future Enhancements
 
