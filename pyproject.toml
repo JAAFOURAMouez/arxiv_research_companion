@@ -29,7 +29,7 @@ eval = [
     "sentence-transformers>=2.2.0",
     "transformers",
     "scipy",
-    "ragas",
+    "ragas>=0.4.4",   # 0.4.3 fails to import with langchain-community 0.4 (vertexai)
     "langchain-openai",
 ]
 

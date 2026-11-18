@@ -416,7 +416,7 @@ def _construct_cited_prompt(query: str, context: str, k: int) -> str:
     return f"""Answer the question based on the context. Use only the information from the context to formulate your answer.
 
 Rules:
-1. The context holds {k} numbered papers, [1] to [{k}]. End every sentence that states a fact with the number(s) of the supporting paper(s), placed before the final period, for example: "Method X improves Y [2]." For several papers use separate brackets: [1][3].
+1. The context holds {k} numbered papers, [1] to [{k}]. End every sentence that states a fact with the number(s) of the supporting paper(s), placed before the final period, like [2]; for several papers use separate brackets: [1][3]. Write real sentences about the papers' content; never copy this rule's wording.
 2. Only use numbers from 1 to {k}. Never write arXiv IDs or titles as citations.
 3. Do not add any information that is not in the context.
 4. If the context does not contain enough information to answer the question, reply with exactly {citations.REFUSAL_SENTINEL} and nothing else.

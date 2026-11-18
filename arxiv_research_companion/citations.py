@@ -111,11 +111,15 @@ def _split_line(line: str) -> List[str]:
 # sentence like "there is not enough information about X [1]" is never read as a refusal.
 _REFUSAL_LOOSE = re.compile(r"NOT[_ \-]ENOUGH[_ \-]INFORMATION")
 _REFUSAL_UNDERSCORE = re.compile(r"not_enough_information", re.I)
+# Any casing ("Not ENOUGH INFORMATION.") counts when it opens the reply; a lowercase sentence that
+# merely contains the words later on ("... not enough information about X, but ...") does not.
+_REFUSAL_LEADING = re.compile(r"^\W*(?:answer\s*:\s*)?not[_ \-]enough[_ \-]information\b", re.I)
 
 
 def is_refusal(text: str) -> bool:
     head = (text or "")[:160]
-    return bool(_REFUSAL_LOOSE.search(head) or _REFUSAL_UNDERSCORE.search(head))
+    return bool(_REFUSAL_LOOSE.search(head) or _REFUSAL_UNDERSCORE.search(head)
+                or _REFUSAL_LEADING.search(head))
 
 
 def _word_count(sentence: str) -> int:

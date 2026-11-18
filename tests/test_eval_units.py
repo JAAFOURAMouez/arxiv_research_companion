@@ -192,6 +192,18 @@ class TestRefusalAudit(unittest.TestCase):
             self.assertEqual(result["n_ooc_unaudited_excluded"], 1)
 
 
+class TestVerdictParsing(unittest.TestCase):
+    def test_parses_json_and_bare_verdicts(self):
+        from eval.judges import parse_verdict
+
+        self.assertEqual(parse_verdict('{"verdict": "supported"}'), "supported")
+        self.assertEqual(parse_verdict('{"supported"}'), "supported")           # qwen drops the key
+        self.assertEqual(parse_verdict('{"unsupported"}'), "unsupported")      # not read as "supported"
+        self.assertEqual(parse_verdict("Verdict: partial"), "partial")
+        self.assertIsNone(parse_verdict("I cannot tell."))
+        self.assertIsNone(parse_verdict(""))
+
+
 class TestLabelTool(unittest.TestCase):
     def test_labels_are_saved_after_each_answer_and_resumable(self):
         import csv

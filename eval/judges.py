@@ -88,6 +88,13 @@ class NliJudge:
 
 
 _VERDICT = re.compile(r'"?verdict"?\s*[:=]\s*"?(supported|partial|unsupported)', re.I)
+# qwen2.5:7b sometimes drops the key and answers {"supported"}; take the first bare verdict word.
+_BARE_VERDICT = re.compile(r"\b(unsupported|supported|partial)\b", re.I)
+
+
+def parse_verdict(raw: str) -> Optional[str]:
+    m = _VERDICT.search(raw or "") or _BARE_VERDICT.search(raw or "")
+    return m.group(1).lower() if m else None
 
 JUDGE_PROMPT = """You are a strict fact-checker. Decide whether the ABSTRACT supports the CLAIM.
 
@@ -128,6 +135,5 @@ class LlmJudge:
                               api_key=self.api_key, max_tokens=60, temperature=0.0,
                               timeout=180.0 if self.provider == "ollama" else 60.0,
                               provider=self.provider) or ""
-        m = _VERDICT.search(raw)
-        verdict = m.group(1).lower() if m else "unparsed"
+        verdict = parse_verdict(raw) or "unparsed"
         return {"verdict": verdict, "score": self.SCORES.get(verdict, float("nan")), "raw": raw[:200]}
